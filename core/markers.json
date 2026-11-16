@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "language": "en",
+  "markers": {
+    "section.leftovers": {"en": "Leftovers"},
+    "leftovers.none": {"en": "none"},
+    "section.memories_used": {"en": "Memories used"},
+    "section.verdict": {"en": "Verdict"},
+    "section.delicate_paths": {"en": "Delicate paths"},
+    "section.ac_test_map": {"en": "Acceptance to test map"},
+    "section.plants": {"en": "Plants"},
+    "section.merged_commits": {"en": "Merged commits"},
+    "review.blocking": {"en": "BLOCKING"},
+    "review.non_blocking": {"en": "NON-BLOCKING"},
+    "review.resolved": {"en": "resolved"},
+    "review.fixed": {"en": "fixed"},
+    "verdict.clean": {"en": "clean"},
+    "verdict.finding": {"en": "finding"},
+    "verdict.green": {"en": "green"},
+    "verdict.pass": {"en": "pass"},
+    "verdict.fail": {"en": "fail"},
+    "verdict.bounce": {"en": "bounce"},
+    "verdict.merged": {"en": "merged"},
+    "verdict.done": {"en": "done"},
+    "fold": {"en": "Folded by"},
+    "plan.contract_column": {"en": "Contract / spec"},
+    "plan.acceptance_column": {"en": "Acceptance criteria"},
+    "plan.edge_column": {"en": "Edge cases"},
+    "plan.managed_column": {"en": "Managed by"}
+  }
+}

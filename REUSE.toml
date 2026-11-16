@@ -1,0 +1,20 @@
+# Which licence covers which file (REUSE Specification 3.3, REUSE.toml version 1; https://reuse.software/spec-3.3/).
+# The last matching table wins: everything is AGPL-3.0-only, except what lands in a user's project (templates,
+# references, the context-gate skill, the stack plug-in template, the versioned memory-types config), which is MIT-0
+# (only the tool copies in .boa/ stay AGPL), and the logo: all rights reserved. The licence texts are in LICENSES/.
+version = 1
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 Giulio Alberello"
+SPDX-License-Identifier = "AGPL-3.0-only"
+
+[[annotations]]
+path = ["assets/**", "references/**", "context-gate/**", "stacks/generic/**", "core/memory-types.json"]
+SPDX-FileCopyrightText = "2026 Giulio Alberello"
+SPDX-License-Identifier = "MIT-0"
+
+[[annotations]]
+path = "docs/assets/logo.png"
+SPDX-FileCopyrightText = "2026 Giulio Alberello"
+SPDX-License-Identifier = "LicenseRef-AllRightsReserved"

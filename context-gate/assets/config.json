@@ -1,0 +1,21 @@
+{
+  "schema": "context-gate/config/1",
+  "mode": "A",
+  "profile": "light",
+  "agent": {"name": "claude-code", "version": "verify-at-install"},
+  "probe": {
+    "probed_at": "verify-at-install",
+    "pre_compaction": "Claude Code PreCompact, every trigger (manual, auto; no matcher); stdin JSON with transcript_path, session_id, trigger, custom_instructions. Measured in 2.1.322; re-verify in the installed version",
+    "prompt_extension": "Claude Code: a successful PreCompact hook's trimmed stdout is joined into newCustomInstructions and appended to the compaction's custom instructions (manual, auto and reactive compaction paths). Measured in 2.1.322; re-verify in the installed version",
+    "extension_cap_chars": 10000,
+    "subagents": "Claude Code: in a sub-agent context the runtime drops newCustomInstructions (it returns only blockedBy): the L0 snapshot is still taken, the extension does not reach that summary. Measured in 2.1.322; re-verify"
+  },
+  "transcript": {
+    "event_field": "transcript_path",
+    "glob": null,
+    "fields": {"session_id": "sessionId", "record_id": "uuid", "timestamp": "timestamp"},
+    "boundary": {"field": "subtype", "value": "compact_boundary"},
+    "write_lag": true,
+    "settle_ms": 1500
+  }
+}

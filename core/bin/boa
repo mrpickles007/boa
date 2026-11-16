@@ -1,0 +1,77 @@
+#!/bin/sh
+# boa — BOA's command-line entry point (POSIX sh): `boa <subcommand> [args]` (`boa help` lists them).
+#
+# First, without Python, it checks BOA's prerequisites: git 2.31+ and Python 3.11+ (the interpreter named by
+# BOA_PYTHON in the config beside this launcher, else the first working python3 on PATH, else python3.<n> for every n
+# from 40 down to 11, python, /usr/bin/python3, /usr/local/bin/python3). If one is missing or too old it changes
+# nothing, says what is missing, the version found and where to get it for this OS, and exits 3: the agent installs it
+# only with the user's consent (and the rights), then runs boa again. Otherwise it runs
+# `<python> -I -B <this dir>/../tools/boa.py "$@"` and exits with its code. The BOA_PYTHON read here is only a first
+# guess, so that a Python is found at all: boa.py reads the config with the one config reader (tools/boa_config.py)
+# and switches to the BOA_PYTHON it finds there when that one runs and differs.
+# Exit: 3 prerequisite missing (nothing done), else the subcommand's own exit code.
+# POSIX sh only (no bash-isms); Windows uses boa.cmd beside it.
+
+here=$(dirname -- "$0")
+tool="$here/../tools/boa.py"
+config="$here/../config.env"
+
+# py_ok PATH: an executable Python 3.11+ that runs isolated and imports json
+py_ok() {
+    [ -n "$1" ] && [ -f "$1" ] && [ -x "$1" ] || return 1
+    "$1" -I -c 'import json, sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1
+}
+
+py=""
+found=""
+if [ -f "$config" ]; then
+    cand=$(sed -n "s/^BOA_PYTHON=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}\$/\1/p" "$config" | sed -n 1p)
+    if py_ok "$cand"; then py=$cand; fi
+fi
+# python3, then python3.40 ... python3.11 (newest first), then the fallbacks
+names=python3
+n=40
+while [ "$n" -ge 11 ]; do names="$names python3.$n"; n=$((n - 1)); done
+for name in $names python /usr/bin/python3 /usr/local/bin/python3; do
+    [ -z "$py" ] || break
+    cand=$(command -v "$name" 2>/dev/null) || continue
+    case $cand in /*) ;; *) continue ;; esac
+    if py_ok "$cand"; then py=$cand; break; fi
+    if [ -z "$found" ]; then
+        found=$("$cand" --version 2>&1 | sed -n 's/^Python \([0-9][0-9.]*\).*/\1/p' | sed -n 1p)
+    fi
+done
+
+git_v=""
+if command -v git >/dev/null 2>&1; then
+    git_v=$(git --version 2>/dev/null | sed -n 's/^git version \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
+fi
+git_ok=0
+if [ -n "$git_v" ]; then
+    major=${git_v%%.*}
+    minor=${git_v#*.}
+    if [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 31 ]; }; then git_ok=1; fi
+fi
+
+if [ -z "$py" ] || [ "$git_ok" -ne 1 ]; then
+    os=$(uname -s 2>/dev/null || echo unknown)
+    {
+        echo "boa: BOA's prerequisites are not met; nothing was done."
+        if [ -z "$py" ]; then
+            echo "  missing: Python 3.11 or newer (found: ${found:-none})"
+        fi
+        if [ "$git_ok" -ne 1 ]; then
+            echo "  missing: git 2.31 or newer (found: ${git_v:-none})"
+        fi
+        case $os in
+            Darwin) echo "  on macOS: Python from https://www.python.org/downloads/ or your package manager; git from https://git-scm.com/downloads or Apple's command-line developer tools" ;;
+            Linux) echo "  on Linux: install python3 (3.11+) and git with your distribution's package manager, or Python from https://www.python.org/downloads/" ;;
+            MINGW*|MSYS*|CYGWIN*) echo "  on Windows: Python from https://www.python.org/downloads/, Git for Windows from https://git-scm.com/downloads; then run boa.cmd or this launcher again" ;;
+            *) echo "  on $os: Python from https://www.python.org/downloads/, git from https://git-scm.com/downloads" ;;
+        esac
+        echo "  Your agent can install them for you with your consent (and the rights to do it), then run boa again."
+    } >&2
+    exit 3
+fi
+
+exec "$py" -I -B "$tool" "$@"

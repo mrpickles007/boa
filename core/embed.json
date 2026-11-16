@@ -1,0 +1,20 @@
+{
+  "_comment": "The embedding library and model memory search re-ranks with; boa install builds them into .boa/embed/ (memory_embed.py). Bump the library, the Python range it ships wheels for (python, inclusive), its constraints (upper major bounds on its direct dependencies) and the model together, as a periodic tooling task: check the release, the licence and the library's supported models on the primary sources, then the new revision and sha256 of every model file.",
+  "schema": "boa/embed/1",
+  "python": ["3.11", "3.14"],
+  "requirements": ["fastembed==0.9.1"],
+  "constraints": ["numpy<3", "onnxruntime<2", "tokenizers<1", "huggingface-hub<2", "requests<3", "tqdm<5",
+                  "loguru<1", "pillow<14", "mmh3<6", "py-rust-stemmers<1"],
+  "model": {
+    "name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "repo": "Qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q",
+    "revision": "faf4aa4225822f3bc6376869cb1164e8e3feedd0",
+    "files": {
+      "config.json": "c8ec081fdad2df991bf5abbf18418fec7a5cdaa421f60ffb060a30040b8c376f",
+      "model_optimized.onnx": "634d0f66c29dc934c8fa72b8a4fe91dd4d420a22f1d82a241058d4316e659a99",
+      "special_tokens_map.json": "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835",
+      "tokenizer.json": "fa685fc160bbdbab64058d4fc91b60e62d207e8dc60b9af5c002c5ab946ded00",
+      "tokenizer_config.json": "0666eebf692422757e1dddf3c9fb1ded73ba3dc726c5828671fc89e45bf3609f"
+    }
+  }
+}

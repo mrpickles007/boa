@@ -1,0 +1,19 @@
+{
+  "schema": "context-gate/config/1",
+  "mode": "A",
+  "profile": "l0-only",
+  "agent": {"name": "unknown", "version": "verify-at-install"},
+  "probe": {
+    "probed_at": "verify-at-install",
+    "pre_compaction": "record here the runtime's pre-compaction event, the triggers it covers and where the transcript path comes from (event field, or transcript.glob below)",
+    "prompt_extension": "none: the runtime cannot extend its compaction prompt from a hook (this is why the profile is l0-only); record the evidence"
+  },
+  "transcript": {
+    "event_field": "transcript_path",
+    "glob": null,
+    "fields": {"session_id": "sessionId", "record_id": "uuid", "timestamp": "timestamp"},
+    "boundary": {"field": "subtype", "value": "compact_boundary"},
+    "write_lag": true,
+    "settle_ms": 1500
+  }
+}

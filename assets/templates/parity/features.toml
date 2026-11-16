@@ -1,0 +1,28 @@
+# Feature inventory of {{BOA_PROJECT_NAME}} (OR-45). Checked by `python3 -I .boa/tools/trace_check.py` (`--report`: the report).
+# Built from the project's own specs: 01-BLUEPRINT.md, 02-SPECIFICATIONS.md, docs/specs/*, docs/api/*.
+#
+# One [[feature]] per feature: one thing a user, operator or client can do or rely on, at the granularity of a screen
+# group, an endpoint family, a background job or a protocol capability.
+#   id      stable, never renumbered or reused ("F-<NAME>")
+#   title   what it is
+#   origin  "baseline" = present before this project (the baseline a rewrite reproduces) · "new" = built by this project
+#   tasks   plan task ids that build it (a split parent stands for its children)
+#   refs    spec inventory items it delivers (each claimed by exactly one feature), and/or
+#   source  where it is specified (required when refs is empty)
+#   note    optional
+# Tests point back with a header comment line "@covers-feature F-ID <task id>" on a real, running test.
+#
+# [not_features] lists every task that builds no product feature: "<task id>" = "<category>: <reason>".
+# Categories: process, tooling, spec, characterization, review, sign-off, verification, maintenance, decision,
+# compliance, environment, documentation, bug-fix.
+
+schema = 1
+
+# [[feature]]
+# id = "F-EXAMPLE"
+# title = "…"
+# origin = "new"
+# tasks = ["T-001"]
+# source = "02-SPECIFICATIONS.md SPEC-M1-1"
+
+[not_features]

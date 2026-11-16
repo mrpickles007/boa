@@ -1,0 +1,16 @@
+# The public tree is an allow-list: only the skill's files belong here (built by the release tool).
+/*
+!/.claude-plugin
+!/.gitignore
+!/KICKOFF.md
+!/LICENSE
+!/LICENSES
+!/README.md
+!/REUSE.toml
+!/SKILL.md
+!/assets
+!/context-gate
+!/core
+!/docs
+!/references
+!/stacks

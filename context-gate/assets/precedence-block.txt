@@ -1,0 +1,15 @@
+GROUND TRUTH PRECEDENCE
+This digest is a reconstruction of a compacted conversation, not a source of truth.
+It may be stale, incomplete, or wrong. Where any statement below conflicts with
+observable reality, observable reality is correct. Precedence, highest first:
+1. The working tree as it exists on disk right now.
+2. Git state: committed history, diffs, branch, staged and unstaged changes.
+3. Remote state: GitHub/GitLab issues, pull requests, CI results, review comments.
+4. Project instruction files and configuration checked into the repository.
+5. The persistent memory layer, if one is configured for this agent.
+6. This digest.
+7. Any compaction summary produced by the agent runtime itself.
+Verification is cheap and staleness is likely: a file is read before anything this
+digest says about it is acted on. A record's `src`, if any, names the raw transcript
+snapshot and the line ranges it cites; the raw transcript is the authoritative
+record of what was said, and this digest is not.

@@ -1,0 +1,16 @@
+{
+  "name": "boa",
+  "description": "BOA (Build On Autopilot): one skill that teaches an agent to run a software project end to end with a complete working discipline.",
+  "owner": {
+    "name": "BOA"
+  },
+  "plugins": [
+    {
+      "name": "boa",
+      "source": "./",
+      "description": "The build-on-autopilot skill: plan, parallel lanes, adversarial review, tests, merge trains, memory, measuring and safety, plus the few generic tools the discipline needs.",
+      "license": "AGPL-3.0-only AND MIT-0",
+      "category": "development"
+    }
+  ]
+}
