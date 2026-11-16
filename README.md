@@ -19,6 +19,27 @@ default; the agent wires BOA into the runtime it runs in).
 - What BOA ships as code and what it teaches: [docs/01-overview.md](docs/01-overview.md#what-ships-as-code)
 - The full documentation set: [Documentation](#documentation)
 
+## The memory layer
+
+BOA gives your project a persistent, searchable memory, so no lesson, decision, constraint or defect is lost between
+sessions, agents or context compactions:
+
+- **Typed memories.** Every memory is one block with a type. BOA ships 17 base types: lesson, gotcha, edgecase,
+  constraint, contract, adr, edr, outcome, trap, heuristic, invariant, goal, nogoal, requirement, deferred, security
+  and bug. Each type says what it records, when to write it, what it must contain, which memory-bank file it goes to
+  and at which moments it is recalled.
+- **Written and recalled by rule.** Agents write memories as they work and search them before they act: at the start
+  of a task, on an error, before a decision, a contract change, a review, a plan or a close. Where the runtime allows
+  it, hooks inject the relevant memories automatically.
+- **Hybrid search.** Keyword ranking (BM25) re-ranked by meaning with a local multilingual model, and a fallback that
+  never answers a false "nothing found". It runs offline once installed.
+- **Never rewritten.** A memory is never edited: a newer one supersedes it, and the history stays readable.
+- **Easy to extend.** Every type, route and recall moment lives in one file, `.boa/memory-types.json`. Add a type with
+  its fields, run `memory_types.py --check`, and the new type works at once in the writer, the lint, the search, the
+  hooks and the tables the agents read. How:
+  [references/memory-types.md](references/memory-types.md) (the section on adding a memory type);
+  the whole layer: [docs/07-memory-and-state.md](docs/07-memory-and-state.md).
+
 ## Prerequisites
 
 The `boa` launcher checks these first, without Python, and changes nothing while one is missing (exit 3, naming what
@@ -124,7 +145,7 @@ All of them: [docs/13-faq-and-limits.md](docs/13-faq-and-limits.md).
 | [04 Roles](docs/04-roles.md) | the lead, sub-leads and every sub-agent; models; reports |
 | [05 Safety](docs/05-safety.md) | the guards, the lead's override, protected commands, the project's own protections |
 | [06 Rules pool](docs/06-rules-pool.md) | the generic rules, how to adopt, adapt and add them |
-| [07 Memory and state](docs/07-memory-and-state.md) | memory bank, memory blocks and search, lead state, metalearning |
+| [07 Memory and state](docs/07-memory-and-state.md) | the memory layer: 17 base memory types, writing, search and recall, extending it with new types; lead state, metalearning |
 | [08 Measuring](docs/08-measuring.md) | the status screen, traceability, durations, disk, residue, logs |
 | [09 Remote runner](docs/09-remote-runner.md) | heavy runs off the development machine (discipline) |
 | [10 Pause, resume, close](docs/10-pause-resume-close.md) | the three commands step by step |
