@@ -32,7 +32,7 @@ profiles below; verify again in the latest official documentation and the instal
 
 | Runtime | Skill folder (user level; project level) | Other channel | Invoked as |
 |---|---|---|---|
-| Claude Code | `~/.claude/skills/build-on-autopilot/`; `.claude/skills/build-on-autopilot/` | plug-in marketplace: the repository's `.claude-plugin/marketplace.json` lists the plug-in `boa` (the repository root, never the archive): `/plugin marketplace add <owner>/boa#v1.2.3` (pins the release tag; without `#<tag>` it follows the default branch), then `/plugin install boa@boa` | `/build-on-autopilot` (skill folder), `/boa:build-on-autopilot` (plug-in) |
+| Claude Code | `~/.claude/skills/build-on-autopilot/`; `.claude/skills/build-on-autopilot/` | plug-in marketplace: the repository's `.claude-plugin/marketplace.json` lists the plug-in `boa` (the repository root, never the archive): `/plugin marketplace add <owner>/boa#v1.2.3` (pins the release tag; without `#<tag>` it follows the default branch), then `/plugin install boa@boa`; or in one step `/plugin install boa --marketplace <owner>/boa` (Claude Code v2.1.275 or later) | `/build-on-autopilot` (skill folder), `/boa:build-on-autopilot` (plug-in) |
 | Codex CLI | `~/.agents/skills/build-on-autopilot/`; `.agents/skills/build-on-autopilot/` (in any directory from the working directory up to the repository root) | the built-in `$skill-installer`, from GitHub only, into `~/.codex/skills/build-on-autopilot/` (the Codex CLI profile); its plug-in marketplace does not list the skill | `$build-on-autopilot` or `/skills` |
 | Gemini CLI | `~/.gemini/skills/build-on-autopilot/` or `~/.agents/skills/build-on-autopilot/`; `.gemini/skills/` or `.agents/skills/` | `gemini skills install <local directory or repository URL>` or `gemini skills link <local directory>`, `--scope user` or `workspace` (the Gemini CLI profile) | its skill selection |
 | OpenCode | `~/.config/opencode/skills/build-on-autopilot/` (it also reads `~/.agents/skills/` and `~/.claude/skills/`); `.opencode/skills/` | none | its skill selection |
@@ -51,10 +51,18 @@ installed it:
   `build-on-autopilot`, and put it in place of the old folder (never two copies in the skills folder: the runtime
   would load both);
 - a clone of the repository: `git -C <skill> fetch --tags`, then `git -C <skill> checkout vX.Y.Z`;
-- Claude Code's plug-in marketplace: `claude plugin marketplace update boa`, then `claude plugin update boa@boa`, and
-  restart the session (verified 2026-11-16 with `claude plugin --help` of v2.1.325). A marketplace added with
-  `#<tag>` follows that tag; how it moves to a new tag is not verified here: check the plug-in page of the installed
-  version (removing the marketplace and adding it again at the new tag is the fallback);
+- Claude Code's plug-in marketplace, by how the marketplace was added (verified 2026-11-18 on v2.1.327, in a throwaway
+  configuration, with the published release):
+  - added **with `#<tag>`** (the pinned install): it stays at that tag. `claude plugin marketplace update boa` and
+    `claude plugin update boa@boa` do not move it (both answer that it is already at the latest version), and adding
+    the marketplace again at the new tag over the old one fails (its source does not match the known-marketplaces
+    entry). The route that works: `claude plugin marketplace remove boa`, then
+    `claude plugin marketplace add <owner>/boa#vX.Y.Z`, then `claude plugin install boa@boa` (the remove also
+    uninstalls the plug-in, hence the install), then restart the session. Afterwards one `boa@boa` is listed and the
+    runtime has cleaned up the old cache folder;
+  - added **without a tag**: it follows the default branch, and there `claude plugin marketplace update boa`, then
+    `claude plugin update boa@boa`, then a restart of the session apply the new release (verified 2026-11-16 with
+    `claude plugin --help` of v2.1.325);
 - Codex CLI's `$skill-installer` and Gemini CLI's `gemini skills install`: the exact update steps are in their
   profiles below, verified on the version and date each names; check them again in the runtime's latest official
   documentation and in the installed version before use (OR-63), and record what you checked. `$skill-installer`

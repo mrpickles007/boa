@@ -228,7 +228,9 @@ nothing the project or its agent changed. In order:
    your scratch directory before you touch it: it is the base of every merge below. Delete the copy only at the end.
 3. **Update the skill** through the channel that installed it (the release archive, a clone of the repository, a
    runtime's plug-in marketplace or skill installer):
-   [references/runtimes.md](../references/runtimes.md#getting-the-skill-into-a-runtime).
+   [references/runtimes.md](../references/runtimes.md#getting-the-skill-into-a-runtime). A plug-in marketplace added
+   at a release tag does not move with its update command: the runtime's profile there gives the route that does
+   (remove the marketplace, add it again at the new tag, install the plug-in again, restart the session).
 4. **See what changed:** `diff -r <old copy> <skill>` on `assets/templates/`, `assets/config.env`, `core/` and
    `stacks/`: the agent and command templates, the config keys, the tools and hooks added, changed or dropped.
 5. **New config keys.** The install never writes `.boa/config.env`: add each key the new template adds, with its

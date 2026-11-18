@@ -39,6 +39,8 @@ session at the top of your project:
 /build-on-autopilot <greenfield|brownfield|refactor> [idea-file]
 ```
 
+In Claude Code 2.1.275 or later, one command installs it as a plug-in: `/plugin install boa --marketplace mrpickles007/boa` (it then starts as `/boa:build-on-autopilot`).
+
 BOA itself needs only Python 3.11+ and git 2.31+; its install builds the memory search environment once (a Python
 in the range given under [Prerequisites](#prerequisites) and a download of about 480 MB).
 
