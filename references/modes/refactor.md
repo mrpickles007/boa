@@ -9,7 +9,8 @@ project and the user confirms before anything goes on (SKILL.md, step 2).
 
 1. **Brownfield first**: run the whole `references/modes/brownfield.md` bootstrap — inventory, analyzer fan-out
    reading every line, architecture, the contracts the code honours (including what third-party clients depend
-   on), and **characterisation goldens that pin current behaviour**.
+   on), **characterisation goldens that pin current behaviour**, and the rules reconciliation when BOA was installed
+   with `BOA_AGENTS_BLOCK=pointer`.
 2. **Target as contract changes.** Read the IDEA in full and express its target against the observed contracts:
    for each contract, kept as is (the default), changed (what, why, who is affected, migration path) or removed.
    Every change and removal is an **ADR**; the specs and contracts are updated in the same task, and the goldens

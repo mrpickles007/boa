@@ -16,16 +16,24 @@ Where the project is (derived at run time, never hard-coded):
            .git, never by running git; never taken from the payload (a forged or nested checkout cannot re-root it)
   CONFIG   <REPO>/.boa/config.env, read through the one reader every BOA tool uses (<REPO>/.boa/tools/boa_config.py,
            parse: the strict grammar; never sourced, never expanded); a missing file or key takes the default in
-           DEFAULTS; a line outside the grammar, or a missing reader, fails load() and the guards refuse (fail closed)
+           DEFAULTS; a line outside the grammar, a special file or a dangling symbolic link at the path, or a missing
+           reader, fails load() and the guards refuse (fail closed)
   WT       the lane worktrees: BOA_WT_DIR, relative to REPO unless absolute (default ../<slug>-wt)
   SCRATCH  BOA_SCRATCH_ROOT (the agent runtime's own temp dir for this project, set when the agent wires its
            runtime) when it is strictly inside /tmp/, /var/tmp/ or the home dir and not an ancestor of the home dir,
            REPO, the projects dir or WT, else BOA's own fallback <temp>/.boa-<uid>/<REPO's path, every non-alphanumeric
            -> '-'> (<temp>: /tmp, the system temp dir on Windows), a directory no runtime uses, so nothing there is
            taken for an agent's scratch until the root is configured
+  SCRATCH_GLOB  BOA_SCRATCH_GLOB: the layout of the task entries under SCRATCH, as a relative glob of path components
+           (the runtime's own layout, from its profile; default `*`: the entries sit directly under the root). Its last
+           component is the task entry (<task>-<role>); every level above it is shared by the lanes. A value that is
+           not a plain relative glob fails load() (the guards refuse every call, naming the key)
   PROJECTS the projects dir: REPO's parent (every other directory in it is another project)
   RUNTIME  BOA_RUNTIME_CONFIG: the top-level names in REPO that hold the agent runtime's own configuration (its
-           settings directory, its instruction file); nobody writes them from a shell, sub-agents never touch them
+           settings directory, its instruction file); the guard refuses shell writes and deletions of these names
+           in the main checkout only. Not judged: git verbs that change them (checkout, restore, rm, ...; only an
+           output file a git verb writes is checked), the same names in a lane worktree, and the lead's file tools
+           (a sub-agent's file tools never write in the main checkout at all)
 Every name derives from REPO itself, never from the payload (a payload's cwd such as <main>/x would name the scratch
 root after a sibling directory). Path keys are validated (relative, no '..'); an invalid value falls back to its
 default. $TMPDIR is deliberately NOT used: its parent could be /tmp itself, which would make all of /tmp deletable.
@@ -33,12 +41,14 @@ default. $TMPDIR is deliberately NOT used: its parent could be /tmp itself, whic
 `<BOA_PYTHON> -I .boa/hooks/hook_config.py` prints the derived values as JSON (an install self-check).
 """
 import faulthandler
+import fnmatch
 import io
 import json
 import os
 import posixpath
 import pathlib
 import re
+import stat
 import sys
 import tempfile
 import threading
@@ -52,6 +62,7 @@ DEFAULTS = {
     "BOA_WT_DIR": "../<slug>-wt",
     "BOA_LEAD_DIR": ".lead",
     "BOA_SCRATCH_ROOT": "",
+    "BOA_SCRATCH_GLOB": "*",                 # the task entries' layout under the scratch root (glob components)
     "BOA_NAME_PREFIX": "boa-",
     "BOA_LABEL_KEY": "",                     # com.<slug>.lane when empty
     "BOA_ENV_PREFIX": "BOA_",
@@ -85,13 +96,18 @@ def reader():
 
 def parse_env(path):
     """The KEY=value pairs of config.env read through boa_config.parse (the strict grammar every BOA tool reads; never
-    sourced, never expanded). {} when the file does not exist; a line outside the grammar, an unreadable file or a
-    missing reader raises (load() fails, so a guard refuses every call naming the line: fail closed)."""
+    sourced, never expanded). {} when the file does not exist; a line outside the grammar, an unreadable file, a
+    special file or a dangling symbolic link at the path (boa_config.check_config_path: one stat, never an open; a
+    dangling link read as a missing file would put the defaults, another lead dir among them, in place of the project's
+    configuration) or a missing reader raises (load() fails, so a guard refuses every call naming it: fail closed)."""
+    reader().check_config_path(path)
     try:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except FileNotFoundError:
-        return {}
+        if not os.path.lexists(path):   # truly nothing there; a link that dangled after the check never means "none"
+            return {}
+        raise reader().ConfigError(f"{path} is a dangling symbolic link, not a regular file: not read") from None
     return reader().parse(text, path)
 
 
@@ -285,6 +301,36 @@ def scratch_root(value, name, guarded, home, ci=None):
     return os.path.join(temp, ".boa-" + uid_name(), name)   # not under a /tmp/<name prefix> lane path
 
 
+SCRATCH_GLOB_PART = re.compile(r"[A-Za-z0-9._*?\[\]!-]+")
+
+
+def scratch_glob(value, path=CONFIG_REL):
+    """The components of BOA_SCRATCH_GLOB (`*/x/*` -> ('*', 'x', '*')): a relative glob of 1 to 8 components, each of
+    [A-Za-z0-9._-] and the glob characters * ? [ ] !, none `.`, `..` or `**`. The obvious spellings are read as meant
+    (`\\` as `/`, a leading or trailing `/` dropped); an empty value is the default `*`. Anything else raises the
+    config reader's ConfigError naming the key: a layout typo never falls back to the loosest layout, the guards
+    refuse every call until it is fixed (fail closed)."""
+    v = (value or "").replace("\\", "/").strip("/")
+    if not v:
+        return ("*",)
+    comps = tuple(v.split("/"))
+    if len(comps) <= 8 and all(SCRATCH_GLOB_PART.fullmatch(c) and c not in (".", "..") and "**" not in c
+                               for c in comps):
+        return comps
+    raise reader().ConfigError(f"{path}: BOA_SCRATCH_GLOB='{value}' is not a relative glob of 1 to 8 path components "
+                               "(e.g. * or */<dir>/*): every call is refused until it is fixed")
+
+
+def scratch_entry(rel, comps):
+    """The task entry a path below the scratch root lies in: rel are its components relative to the root, comps the
+    layout (scratch_glob). The component at the layout's last level when every level down to it matches the layout's
+    glob there (case-sensitive), else None: a shared level above the entries, or a path outside the layout."""
+    n = len(comps)
+    if len(rel) < n or not all(fnmatch.fnmatchcase(r, c) for r, c in zip(rel, comps)):
+        return None
+    return rel[n - 1]
+
+
 def load(here=None, env=None, ci=None):
     """The configuration as a dict of derived values; None when the hook is not installed in a checkout (the guards
     then refuse). The repository is the one holding the hook file (<repo>/.boa/hooks/<hook>.py), never one named by
@@ -320,7 +366,8 @@ def load(here=None, env=None, ci=None):
     runtime = tuple(w.rstrip("/") for w in rel_paths(conf["BOA_RUNTIME_CONFIG"], "") if "/" not in w.rstrip("/"))
     never = (".git", ".boa", lead_dir) + runtime   # never a place sub-agents write into
     return {
-        "repo": repo, "wt": wt, "scratch": scratch, "runtime_config": runtime,
+        "repo": repo, "wt": wt, "scratch": scratch, "scratch_glob": scratch_glob(conf["BOA_SCRATCH_GLOB"], os.path.join(repo, CONFIG_REL)),
+        "runtime_config": runtime,
         "projects": os.path.dirname(repo), "config": os.path.join(repo, CONFIG_REL), "slug": slug,
         "task_prefix": prefix, "task_re": task_regex(prefix),
         "branch_re": branch_lane_regex(conf["BOA_BRANCH_GRAMMAR"] or DEFAULTS["BOA_BRANCH_GRAMMAR"], prefix),
@@ -356,7 +403,7 @@ def checkouts(cfg):
 # the verdict back; no guard reads a runtime's own payload.
 EVENTS = ("session-start", "session-end", "subagent-start", "subagent-stop", "stop", "pre-tool", "post-tool",
           "post-tool-failure", "permission-denied", "permission-request", "prompt")
-TOOL_KINDS = ("shell", "file-write", "file-read", "sub-agent", "other")
+TOOL_KINDS = ("shell", "file-write", "file-read", "sub-agent", "report", "other")   # report: a report handed back
 MAX_EVENT = 4 * 1024 * 1024   # bytes of stdin read; a longer event is unreadable (refused)
 
 
@@ -456,17 +503,57 @@ def escape_token(event, prefix):
     return m.group(1) if m else None
 
 
+def log_kind(path):
+    """What the guard log path is when something is there that is not a regular file ("a FIFO", "a directory", ...;
+    any symbolic link is "a symbolic link", whatever it points to: dangling, a regular file or a loop; never
+    followed, so a dangling one never creates its target wherever it points), else None (a regular file, or nothing
+    there: it is created). One lstat with the standard library only, never the config reader: the log must stay
+    writable when .boa/tools/boa_config.py is missing or broken, or the lead's escape could not be audited and would
+    be refused. The open's O_NOFOLLOW (guard_log) covers a link that appears between this check and the open."""
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(mode):
+        return "a symbolic link"
+    if stat.S_ISREG(mode):
+        return None
+    return ("a character device" if stat.S_ISCHR(mode) else "a block device" if stat.S_ISBLK(mode)
+            else "a FIFO" if stat.S_ISFIFO(mode) else "a socket" if stat.S_ISSOCK(mode)
+            else "a directory" if stat.S_ISDIR(mode) else "not a regular file")
+
+
+def log_ways_out(log, loaded):
+    """The ways out when the guard log cannot be written (a FIFO, a directory, ... at its path), named in every
+    refusal of an escape that could not be logged; one sentence, its period included. The guards refuse to remove the
+    file themselves, so the lead's shell cannot. With the configuration loaded, the lead's file tool can also move the
+    log (BOA_LOG_DIR: a new subdirectory of .boa/, as the installer accepts it); without it (loaded False) the guard
+    refuses every call, the lead's file tool included: only the owner's hand is left."""
+    if not loaded:
+        return f"Ways out, by the owner's hand only: remove {log}, and fix .boa/config.env."
+    return (f"Ways out: the owner removes {log} by hand, or the lead sets BOA_LOG_DIR in .boa/config.env to a new "
+            "subdirectory of .boa/ with its file tool.")
+
+
 def guard_log(cfg, here, agent, tool, reason, override=None):
     """Append one record {ts, agent, tool, reason capped at 500 characters[, override]} to <log dir>/guard-denials.jsonl
     (0600; the reason can quote arguments, the command line itself is not stored): the configured log dir, else
     <repo>/.boa/logs when the configuration could not be loaded (created when missing). True when the record landed.
     A denial or a note that cannot be written goes to stderr; <env prefix>GUARD_NOLOG=1 (tests) skips them (True). An
     escape (override) is always written, NOLOG or not: when it cannot be, False, and the caller refuses the escape (an
-    escape is always audited). Never raises."""
+    escape is always audited). The log file is lstat'ed before it is opened (log_kind: the standard library only, so a
+    missing or broken config reader never blocks the escape): a FIFO, a device, a socket, a directory or a symbolic
+    link (any) there is never opened (a FIFO would hang every logged verdict until the watchdog; a dangling link would
+    create its target outside the repository): the record goes to stderr with the file named, and the result is False
+    (so an escape is refused, naming the ways out: log_ways_out). The open never follows a link (O_NOFOLLOW: a link
+    that appears after the check; where the system has no O_NOFOLLOW (Windows), the open follows such a link, a
+    dangling one may get its target created, and a link found there after the open refuses the write; one swapped in
+    and out again before that look is not seen, the record then written at its target: a declared limit) and is
+    binary (O_BINARY: no CRLF from the Windows C runtime). Never raises."""
     prefix = env_prefix_of(cfg, here)
     if os.environ.get(prefix + "GUARD_NOLOG") == "1" and not override:
         return True
-    rec = "{}"
+    rec, why = "{}", "unavailable"
     try:
         repo = cfg["repo"] if cfg else hook_repo(here)
         rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "agent": agent or "lead", "tool": tool,
@@ -476,15 +563,30 @@ def guard_log(cfg, here, agent, tool, reason, override=None):
         rec = json.dumps(rec)
         log_dir = cfg["log_dir"] if cfg else os.path.join(repo, ".boa", "logs")
         os.makedirs(log_dir, 0o700, exist_ok=True)   # a missing log dir never refuses an escape
-        with open(os.path.join(log_dir, "guard-denials.jsonl"), "a", encoding="utf-8") as fh:
-            os.chmod(fh.name, 0o600)
+        log = os.path.join(log_dir, "guard-denials.jsonl")
+        kind = log_kind(log)   # one stat before the open: a FIFO never hangs a verdict
+        if kind is not None:
+            why = f"{log} is {kind}, not a regular file: not written"
+            raise OSError(why)
+        try:
+            fd = os.open(log, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                         | getattr(os, "O_BINARY", 0), 0o600)
+        except OSError as exc:
+            why = f"{log} could not be opened ({exc.strerror or type(exc).__name__}): not written"
+            raise
+        if not hasattr(os, "O_NOFOLLOW") and stat.S_ISLNK(os.lstat(log).st_mode):
+            # no O_NOFOLLOW here (Windows): a link that appeared after the check was followed by the open; nothing is
+            # written through it (a dangling one may have been created at its target: the open cannot avoid that)
+            os.close(fd)
+            why = f"{log} could not be opened (a symbolic link appeared there; no O_NOFOLLOW here): not written"
+            raise OSError(why)
+        with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as fh:
+            os.chmod(log, 0o600)
             fh.write(rec + "\n")
         return True
     except Exception:
-        if override:
-            return False
         try:
-            sys.stderr.write("guard log unavailable: " + str(rec)[:2000] + "\n")
+            sys.stderr.write(f"guard log {why}: " + str(rec)[:2000] + "\n")
         except Exception:
             pass
         return False
@@ -556,7 +658,8 @@ def fail_closed(tag, exc, event, cfg, here):
         if guard_log(cfg, here, "lead", tool, f"ESCAPE (guard failed: {kind}: {detail})", token):
             return ""
         return deny_verdict(f"{tag} the guard could not judge this call ({kind}: {detail}), and the lead's escape "
-                            f"could not be logged in {log}: refused (an escape is always audited). Fix the log dir.")
+                            f"could not be logged in {log}: refused (an escape is always audited). "
+                            f"{log_ways_out(log, bool(cfg))}")
     guard_log(cfg, here, agent, tool, f"FAIL-CLOSED ({kind}: {detail})")
     return deny_verdict(
         f"{tag} the guard could not judge this call ({kind}: {detail}) and refuses it: it fails closed. "

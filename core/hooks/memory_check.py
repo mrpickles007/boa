@@ -49,14 +49,13 @@ def check(ev) -> "object":
         return types_written(path)
     names = memory_types.load().names
     if path == inbox:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            _, findings = ml.lint_texts({path: fh.read()}, names, True, None, False)
+        texts, unread, _ = ml.read_files([path])   # one stat first: a special file is a finding, never opened
+        _, findings = ml.lint_texts(texts, names, True, None, False)
+        findings = unread + findings
     elif path.startswith(mdir + os.sep) and (path.endswith(".md") or path.endswith(ml.LEDGER)):
-        texts = {}
-        for f in ml.files_of([mdir]):
-            with open(f, encoding="utf-8", errors="replace") as fh:
-                texts[f] = fh.read()
+        texts, unread, _ = ml.read_files(ml.files_of([mdir]))
         _, findings = ml.lint_texts(texts, names, False, os.path.join(mdir, ml.LEDGER), True)
+        findings = unread + findings
     else:
         return v
     if findings:

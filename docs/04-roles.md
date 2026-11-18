@@ -50,8 +50,8 @@ scratch directory, enforced by the guard and the agent-to-task binding ([05 Safe
 
 Each role's model and effort are set in its agent header from `BOA_MODEL_FRONTIER` and `BOA_MODEL_MID`: builder,
 reviewer and analyzer on the frontier model, effort high; builder-mid, tester and integrator on the model just below
-it, effort high. BOA ships no default model: the agent picks both from the runtime's current model list, verified at
-bootstrap, and confirms them with you. Only you change the roster. A temporary switch to another model happens only
+it, effort high. BOA ships no default model: the agent picks both from the runtime's current model list, checked in
+its latest official documentation and the installed version at every wiring (OR-63), and confirms them with you. Only you change the roster. A temporary switch to another model happens only
 after an agent actually stopped on a rate limit, never when merely close to it, and commit trailers always name the
 model the agent really ran on.
 
@@ -81,5 +81,7 @@ machine-recognised words of a report (section names, the Leftovers label and its
 ## The agent lifecycle
 
 Every spawned agent's id is recorded per task and role. For every later round of the same task and role (a delta fix,
-a delta re-review) the lead resumes the same agent with its context; new work always gets a new agent. After an
+a delta re-review) the lead resumes the same agent with its context, or, at the next hand-off and never while an agent works, starts a fresh agent of the same role when
+that context has grown large (`BOA_AGENT_FRESH_TOKENS`), rounds have piled up or the cache has expired (the operating procedures, section 5.3); new work always gets
+a new agent. After an
 interruption the lead first harvests the agents that finished, then advances the lanes.

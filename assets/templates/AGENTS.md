@@ -27,11 +27,25 @@ with what it is for, when to read it and who updates it. A new discipline file g
 
 **BOA is a tool, never the project (OR-68):** `.boa/` is git-ignored (`/.boa/*`) and reinstalled with `boa install`,
 except the files you write for the project there (`.boa/config.env`, `.boa/protected-commands.conf`,
-`.boa/memory-types.json`); its files, tests, logs and tasks are never mixed with the project's, and nothing of it goes
+`.boa/memory-types.json`, `.boa/markers.json`, the stack plug-in `.boa/stack/`); its files, tests, logs and tasks are never mixed with the project's, and nothing of it goes
 into the product or its releases. What you write for the project (those files, memory bank, plan, specs, handbook,
 this file) is project knowledge and stays versioned.
 
 ## Read order
+**BOA is installed here: never bootstrap it again** once the plan has tasks, whatever door you came in by (the skill
+with a mode, a command, this file alone): no mode analysis, no plan, spec or memory rewrite (`run-project`'s
+bootstrap runs only on an empty plan). **Read this file in full from disk before acting:** your runtime may cut it
+silently (an instruction-file size cap). **Fresh clone** (`.boa/commands/` or `.boa/bin/` missing: `.boa/` is not
+versioned): find the BOA package (a copy installed as a skill on this machine, else ask the user where it is) and run
+`sh <package>/core/bin/boa install --target . --package <package>` first; it restores BOA's files. **Paused
+project** (`{{BOA_LEAD_DIR}}/PAUSE` exists): before anything else read `{{BOA_LEAD_DIR}}/RESUME-LEAD.md` and follow
+`.boa/commands/resume-project.md` (the mechanics: the BOA package's `references/pause-resume.md` "Resume, step by
+step"). **A runtime this project has not worked in** (the capabilities record, `memory-bank/04-ARCHITECTURE.md`
+"Environment", does not name it, or BOA's agents, commands or hooks are not wired in it): wire it first (§13, with
+the BOA package's `SKILL.md` steps 1 and 7), before you clear a pause flag or resume any lane, and leave the other
+runtime's wiring untouched. Until that wiring exists no hook reminds you of any of this: this read order is the only
+path.
+
 1. This file, starting with its Modus operandi (the mood behind every rule), then the rules.
 2. [docs/agent-handbook.md](docs/agent-handbook.md): the map of information, every tool, every workflow.
 3. Your runtime's own instruction file, only where the runtime does not read this file natively: a pointer here,
@@ -87,7 +101,7 @@ protocol):
    `04-ARCHITECTURE.md`, or write an ADR block for `06-DECISIONS.md` (id-less, staged the same way) — in the same
    session, never "later".
 5. **Before you risk running low on context / before a compaction:** flush everything durable to the memory bank so
-   a fresh session can resume with zero loss. The context-gate (PreCompact hook) keeps a byte-exact transcript
+   a fresh session can resume with zero loss. The context-gate (pre-compact hook) keeps a byte-exact transcript
    snapshot, but the memory bank is the contract. **After a compaction:** re-read your brief, the resume files, the
    worktree and git (they win over the summary); when in doubt read your own raw transcript, never reconstruct it
    from memory.
@@ -245,11 +259,12 @@ round (delta fixes, delta re-reviews, re-tests, tester confirmations), its conte
 new piece of work → a **new** agent; a train's integrator is resumed for the same train (re-stack, re-gate) and new
 for a new train; a lost agent or session → a new agent of the same role, briefed from `.lane-resume/<role>.md` and
 the lead's notes since. Resuming reuses the context and the prompt cache and keeps the agent's knowledge of the lane.
-(How the runtime resumes an agent is in its profile, the BOA package's `references/runtimes.md`; verify it at install.)
+When to start a fresh agent instead of resuming (a large context, piled-up rounds, an expired cache; decided only at the next hand-off, never by stopping a working agent): 09 §5.3.
+(How the runtime resumes an agent is in its profile, the BOA package's `references/runtimes.md`; verify it at every wiring, OR-63.)
 
 **Cost hygiene** (OR-36): keep the prompt cache warm: the sub-agents' TTL is the highest the runtime allows, and
 the agent sets it when wiring BOA (`references/runtimes.md` of the BOA package); the main session's TTL changes only
-with the user's agreement (the runtime's settings, `references/runtimes.md`; verify at install), and resume the same
+with the user's agreement (the runtime's settings, `references/runtimes.md`; verify per OR-63), and resume the same
 agent per role within a task (OR-16): sub-agents wait on long
 runs, and a cold cache pays the whole context again on every turn.
 
@@ -383,7 +398,7 @@ protocol (§4bis).
 - **Where suites run** (where, serial or parallel, how many at once): decided once at project start with the owner
   from the measured load, recorded in "Environment" and the handbook (project-wiring "light and heavy suites").
 - **Remote test runner** (optional, `BOA_RUNNER={{BOA_RUNNER}}`): when on, heavy runs (gate test steps, mutation,
-  whole suites, container and database suites) run only there, through the project's runner command (project-wiring "remote runners"); a runner that is not reachable means stop and report, never a local fallback (OR-32).
+  whole suites, container and database suites) run only there, through the project's runner command (project-wiring "remote runners"); with it on, a runner command not configured on this machine or not reachable means stop and report, never a local fallback; with it off, heavy runs stay local (OR-32).
 
 ## 10. Parallelism (git worktrees) and disk watch
 
@@ -434,7 +449,18 @@ protocol (§4bis).
 ## 13. Wiring your runtime
 
 The agent self-wires agents, commands and hooks, report capture included, in its own runtime's format at bootstrap: the
-step "Wire BOA into your runtime (self-wire)" of the BOA package's `SKILL.md`, formats in `references/runtimes.md`.
+step "Wire BOA into your runtime (self-wire)" of the BOA package's `SKILL.md`, formats in `references/runtimes.md`,
+each checked in the runtime's latest official documentation and the installed version, every time (OR-63).
+
+**Your runtime only.** Wiring a runtime (at bootstrap, at a resume or at any time) does only what that runtime needs
+and never modifies, moves, regenerates or removes another runtime's wiring (its hooks, agents, commands, settings or
+skill copies) unless the user explicitly asks, even when it looks stale or duplicated: report what you found and
+leave it alone. The runtimes coexist; each one has its line in the capabilities record, and the other runtimes'
+top-level wiring names go into `BOA_RUNTIME_CONFIG` too. A partial net: the guard then refuses shell writes and
+deletions of those names in the main checkout, and only that; it does not judge git verbs on them, does not cover
+them in a lane worktree, does not refuse the lead's file-editing tools, and takes top-level names only (wiring nested
+in a shared directory is discipline alone). Everywhere else the rule is discipline, and the reviewer flags a diff
+that touches another runtime's wiring without the user's recorded yes.
 
 In every runtime the sources of truth are runtime-neutral: the role contracts `.boa/agents/*.md`, the commands
 `.boa/commands/<name>.md` (`run-project`, `pause-project`, `resume-project`, `close-project`, `run-task`,
@@ -451,10 +477,11 @@ rendered from these sources in its own format, and BOA's hooks, permissions and 
 | session start | `"{{BOA_PYTHON}}" -I .boa/hooks/session_status.py` | status and resume protocol into the context |
 | before every tool call | `"{{BOA_PYTHON}}" -I` with `.boa/hooks/guard_destructive.py`, `.boa/hooks/pause_guard.py` | the safety layer and the pause signal |
 | the lead spawns a sub-agent (its result carries the agent id) | `"{{BOA_PYTHON}}" -I .boa/hooks/agent_binding.py` | the agent→task binding (the guard keeps the agent in its own lane) |
+| a sub-agent starts (where the runtime injects context there) | `"{{BOA_PYTHON}}" -I .boa/hooks/memory_recall.py --session` | the memory reminder and every active lane's current memories into the starting agent (OR-51); it reads no event and prints plain text, which the wiring passes on as the context |
 | a sub-agent stops | `"{{BOA_PYTHON}}" -I .boa/hooks/subagent_stop.py` | report capture into the lane journal, pause capture |
 | the lead stops | `"{{BOA_PYTHON}}" -I .boa/hooks/lead_stop.py` | resume file at a pause |
 | after a failed tool call | `"{{BOA_PYTHON}}" -I .boa/hooks/memory_recall.py` | matching gotcha/trap/lesson ids injected (OR-51) |
-| after a file Write or Edit | `"{{BOA_PYTHON}}" -I .boa/hooks/memory_check.py` | memory files linted at once (OR-50) |
+| after a file write | `"{{BOA_PYTHON}}" -I .boa/hooks/memory_check.py` | memory files linted at once (OR-50) |
 | before a compaction | `.context-gate/hooks/precompact.sh` | byte-exact transcript snapshot (+ summary steering where the runtime allows it) |
 
 Every BOA hook reads BOA's neutral event as JSON on stdin and answers with the neutral verdict (the BOA package's
@@ -495,7 +522,7 @@ integrator's train fold, with `--ingest`); a lane produces id-less blocks with `
 --format-only`, which may carry `supersedes="memory-N"` (an existing final id) or `supersedes-brief="<brief>"`
 (another new block of the same lane or batch); the fold's `memory_write.py --ingest` resolves them and stamps both
 directions atomically. The id ledger `memory-bank/.memory-ids.jsonl`, written only by the tool, makes a hand-written
-id fail the lint, the PostToolUse hook and the pre-commit.
+id fail the lint, the post-tool hook and the pre-commit.
 Supersession chains are always coherent: a memory is superseded at most ONCE (a single `superseded-by`); to replace
 a memory that is already superseded, supersede the CURRENT head of its chain (`memory_search.py --chain <id>` shows
 it); one memory may supersede several current memories (a merge); two memories superseding the same one (a fork) are
@@ -528,10 +555,16 @@ types first (generated from `.boa/memory-types.json`):
   edgecase, bug, …) so the next agent finds it.
 - **Cite** what you relied on: `Memories used: memory-12, memory-31` (final ids only; a lane's own new memories are
   cited by their brief until the fold gives them ids), or `Memories used: none found`.
-- **What is wired:** the session-start status prints the current memories for every active task id; the
-  PostToolUseFailure hook `.boa/hooks/memory_recall.py` injects the gotcha/trap/lesson ids matching a failed tool
-  call's error text (where the runtime has that event; verified at install). A sub-agent gets its task's memories through its
-  **brief**: the lead pastes the `memory_search.py --task <T>` output ("memories to know") into every brief (09 §4). A
-  SubagentStart injection is not shipped (a runtime that injects SubagentStart context may get one the agent writes:
-  `.boa/hooks/agent_binding.py --task-of <agent id>`, then `memory_search.py --task <T>`). The hooks help; they never replace the agent's own search.
+- **What is wired** (each where the runtime has the event; verified at every wiring, OR-63): the session-start status
+  prints the current memories for every active task id; the post-tool-failure hook `.boa/hooks/memory_recall.py`
+  injects the gotcha/trap/lesson ids matching a failed tool call's error text; at a sub-agent's start, where the
+  runtime injects context there, `.boa/hooks/memory_recall.py --session` gives the starting agent the memory reminder
+  and the current memories of every active lane (the lanes exist before the spawn; the agent→task binding lands only
+  after the agent starts, so no hook can pick the agent's own task at that moment). A sub-agent gets its own task's
+  memories through its **brief**: the lead pastes the `memory_search.py --task <T>` output ("memories to know") into
+  every brief (09 §4). **Discipline only:** no runtime event marks a decision, planning or the
+  close-out, and no shipped hook acts on a contract file's write (the post-write hook only lints the memory files):
+  at those moments the agent searches itself, as the table above says. A BOA update has its own procedure
+  (09 §30, docs/02 "Re-installing and upgrading"). The review moment is served in part by the sub-agent start hook, and
+  for the rest by the brief's "memories to know". The hooks help; they never replace the agent's own search.
 

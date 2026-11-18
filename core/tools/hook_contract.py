@@ -17,7 +17,8 @@ Neutral event (one JSON object; every field optional except `event`):
   event            session-start | session-end | subagent-start | subagent-stop | stop | pre-tool | post-tool |
                    post-tool-failure | permission-denied | permission-request | prompt   (anything else: not
                    handled, the hook does nothing; the guards, which read hooks/hook_config.py, refuse it)
-  tool             sub-agent | shell | file-write | file-read | other   (the tool kind of a *-tool event)
+  tool             sub-agent | shell | file-write | file-read | report | other   (the tool kind of a *-tool event;
+                   report: the call by which a sub-agent hands back its final report)
   tool_input       object: command (shell), file_path (file-*), path / glob (file-read: a directory / a path
                    pattern searched), description / prompt / subagent_type / model
                    (sub-agent)

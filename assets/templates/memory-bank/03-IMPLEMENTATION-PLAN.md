@@ -35,7 +35,8 @@ the `SPEC-` ids, comma-separated; or `none: <category>` for a task with no exter
 `documentation`, `environment`, … — whose acceptance criteria are then its contract), acceptance criteria, **edge
 cases** (boundaries, empty or oversized input, concurrency, failure and retry, permissions, time and locale, partial
 failure, hostile input — or `none, because …`), **managed by** (`lead`, or the sub-lead that runs the task; never
-empty), deps; the machine columns are in the block below. A new feature enters as spec-side task(s) plus build task(s) that depend on
+empty), deps; the machine columns are in the block below. The tools find the contract, acceptance, edge-case
+and managed-by columns by their header names (`.boa/markers.json`, where a plan's own names are added as aliases). A new feature enters as spec-side task(s) plus build task(s) that depend on
 them (OR-48).
 
 | ID | Title | MS | Contract / spec | Acceptance criteria | Edge cases | Managed by | Deps |

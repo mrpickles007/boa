@@ -257,9 +257,11 @@ CI is project work: BOA ships no CI file, no CI key and no pin. When the user co
 the project-wiring checklist writes it for this project, through the pipeline (task, review, test), from these
 invariants:
 
-1. **CI runs the project's gate, never a second gate.** The job calls the project's gate in its pre-merge mode (every
-   tree step, as the integrator's gate; project-wiring item "the project gate"); it never re-implements a check, so
-   the gate and the CI cannot drift. A check
+1. **CI runs the project's gate, never a second gate.** The job calls the project's gate in its heavy mode (the
+   heavy steps of the pre-merge run alone), exactly as the remote runner runs them (project-wiring items "the project
+   gate" and "remote runners"); it never re-implements a check, so the gate and the CI cannot drift. BOA's static
+   checks stay in the local gate (the integrator's pre-merge run, from the main checkout's `.boa/tools/`): a CI
+   checkout has no `.boa/` tools, which are git-ignored. A check
    that belongs in CI belongs in the gate (a stack plug-in step).
 2. **Triggers are chosen per project and targeted.** Manual start by default (the rules pool: hosted minutes cost
    money); automatic triggers only with the user's yes, and then narrow: the main branch's PR/MR only, path filters
@@ -275,7 +277,8 @@ invariants:
 5. **Nothing that costs money without consent.** Hosted minutes, paid runners, artifacts storage, scheduled runs:
    each is part of the user's yes, with the expected cost when it is known. A job has a timeout.
 
-The machine-local values in `.boa/config.env` (the Python path, the runner switch) must hold on the CI machine too:
+The machine-local values in `.boa/config.env` (the Python path, the runner switch) that the heavy steps read must
+hold on the CI machine too:
 the task picks an image where they do, or sets the same keys in the job's environment (BOA's tools read the
 environment first; project-wiring "Config", per-machine values), and proves it with one manual run.
 
@@ -308,8 +311,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       # the stack's toolchain setup, pinned the same way (decided by the task)
-      - name: Gate (the same script the integrator runs)
-        run: <the project's gate command> --pre-merge
+      - name: Gate, heavy steps (as the remote runner runs them; BOA's static checks stay in the local gate)
+        run: <the project's gate command, its heavy steps alone>
 ```
 
 ### Example: GitLab CI (annotated, not installed)
@@ -328,5 +331,5 @@ gate:
   variables:
     GIT_DEPTH: "0"
   script:
-    - <the project's gate command> --pre-merge   # the same script the integrator runs
+    - <the project's gate command, its heavy steps alone>   # as the runner runs them; BOA's static checks stay local
 ```

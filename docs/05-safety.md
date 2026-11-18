@@ -24,7 +24,17 @@ real attackers, always.
   whose start holds a protected path is judged like `rm -rf` of that start; a `find -L`/`-H` that deletes is refused);
   writes kept inside the project's paths;
 - a sub-agent is confined to its own lane: its worktree, the scratch root and its lane's labelled resources; it may
-  not read or write another lane or another project, and it never pushes to the main branch;
+  not read or write another lane or another project, and it never pushes to the main branch. Its metadata changes
+  (`chmod`, `chown`, `chgrp`, `touch`, `setfacl`, `chattr`) are writes like any other (`chmod -x` of a git hook would
+  turn the hook off), and so are the writers and the git commands it runs from `find -exec`; from `xargs` they are
+  refused. Its own lane root is no write target (`chmod 755 .` or `touch .` there is refused). Its git commands that
+  write an index, HEAD or a work tree (`add`, `commit`, `reset`, `stash`, `checkout`, `bisect`, ...) never run on the
+  main checkout, and it never moves the main branch ref (`update-ref`, `branch -f`, `checkout -B`, `fast-import`, a
+  fetch into `heads/main`, ...); a git subcommand or ref name computed at run time (`git $cmd`, `branch -f $b`) is
+  refused;
+- the scratch root: every level above the task entries (the layout `BOA_SCRATCH_GLOB` describes) is shared and never
+  deleted, and a sub-agent deletes there only inside its own `<task>-<role>` entry, never another lane's or a lead
+  directory;
 - every agent: no `/dev` targets, no force push or deletion of main, no `kill` of every process or a process group,
   no `pkill`/`killall`, reboots, filesystem or partition tools; nobody writes the runtime's own configuration names
   from a shell (`BOA_RUNTIME_CONFIG`), and shell writes to `.boa/` are refused for everyone (the lead edits it with
@@ -71,16 +81,23 @@ verdict and a timeout all refuse the call; only the logging hooks (status, repor
 open, so they never stop the session. The session-start status shows a `GUARD DOWN` warning when a safety hook is
 not wired or cannot start.
 
+BOA's own tools never write through a path that is not a regular file: an output path that names a device, a pipe,
+a socket or a directory (a symbolic link judged by its target) is refused with a message naming it, before anything
+is written, and so is such an input file of the memory writer before it is read, so a mistyped path never replaces a
+device or hangs a tool.
+
 ## The pause guard
 
 While the pause flag exists, `pause_guard.py` lets a sub-agent only save its state (write its resume file, append to
-its lane's memories file, read-only git, commit in its own worktree, remove its own scratch, stop its own processes)
+its lane's memories file, read-only git, commit in its own worktree, remove its own scratch, stop its own processes,
+hand back its final report)
 and denies everything else with the instruction to do exactly that and end its turn
 ([10 Pause, resume, close](10-pause-resume-close.md#pause)).
 
 ## The cleanup allowlist
 
-If you want no removal prompts, the agent adds the cleanup shapes to its runtime's permission allow and deny lists:
+If you want no removal prompts, the agent adds the cleanup shapes to its runtime's permission allow and deny lists (their format
+checked in the runtime's latest official documentation and the installed version, OR-63):
 removals under the scratch root and the lane worktrees dir, worktree removal and prune, deletion of lane branches and
 of the project's own prefixed containers (only where it uses containers); denied: removals with `..`, of `/`, the home,
 `/tmp` or the projects' parent directory. Routine cleanup then runs without a prompt while the guard stays the safety
@@ -94,9 +111,12 @@ These are the project's own, built by the agent (project-wiring items "git hooks
   offers it (set only with your consent and read back; a protection the forge refuses is reported as a gap), else a
   client-side pre-push hook in every worktree; an exceptional escape is explicit and logged;
 - Conventional Commit messages checked at commit time by an existing tool;
+- the same content rules as a file (secret scanner, forbidden names, product language, trailers) applied to commit
+  messages, and to branch and tag names by a pre-push or server-side check, with the project's existing tools;
 - the memory lint on every commit that touches the memory bank;
 - a maintained secret scanner on the lines each commit adds, and on the whole tree and every ref's history at
-  close-out; a finding prints its location and rule, never the secret; a missing scanner refuses the commit.
+  close-out, commit messages and tag annotations included; a finding prints its location and rule, never the secret; a
+  missing scanner refuses the commit.
 
 Secrets are never committed, printed or put on a command line. The forge decisions: [references/forge.md](../references/forge.md).
 
@@ -119,4 +139,8 @@ capped and redacted, private to you, read by the lead at every train to shape th
 The guards judge the command text they are given: not the inside of scripts, inline interpreter code, sourced files,
 aliases or anything run later; names computed at run time are not resolved; a protected rule judges the command line,
 not the input a program reads (a here-document, a pipe, a redirect). On Windows and macOS some letter-case and path
-forms are folded and others are not. The full list: [references/safety.md](../references/safety.md#known-limits).
+forms are folded and others are not. The guard does not judge git verbs on protected names: a `git rm`, `git mv`,
+`git checkout --`, `git restore`, `git stash` or `git reset` that changes any protected name of the main checkout
+(`.boa`, the memory bank, the lead directory, the agent runtime's configuration names in `BOA_RUNTIME_CONFIG`) is not
+refused; nor are the runtime's configuration names inside a lane worktree, nor the lead's file-editing tools on them; another runtime's wiring is kept by discipline and by the review. The full list:
+[references/safety.md](../references/safety.md#known-limits).

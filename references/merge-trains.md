@@ -37,8 +37,8 @@ push (the integrator contract and 09 §7 define that path).
 ## The gate
 - ONE full gate on the stacked tip, the project's gate in pre-merge mode reusing each lane's receipts (project-wiring
   item "the project gate"): every tree step, the full
-  gate's budgets and suite selection (never the changed-files mode), on the remote runner when one is configured (unreachable =
-  stop the train, never a local gate).
+  gate's budgets and suite selection (never the changed-files mode), on the runner when it is on (its command not configured on
+  this machine or not reachable = stop the train and report, never a local gate; with the runner off, the gate runs locally).
 - **Mutation is not re-run** where the testers' receipts still hold: only the files whose receipt no longer holds
   after the rebase run again (changed lines, covering tests).
 - Steps that check the deployed instance run after the merge, in the main checkout.

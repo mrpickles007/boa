@@ -45,7 +45,27 @@ suffice, and mutating them only produces low-value tests.
      host's mutation slots are full: about 2 concurrent runs on a shared development host, about a quarter of the CPUs
      (at least 2) on a dedicated runner, counted from the running mutation containers or processes; on the
      development host it also waits while a train gate runs. The train's own run has priority.
-4. **0 skipped mutants.** A mutant skipped because its tests ran too long is a re-run, never a pass.
+4. **0 skipped mutants.** A mutant is *skipped* when it never ran, because the clean baseline run of its covering tests
+   already exceeds the bound: raise the bound within the cap (`run_timeout_cap_s`) or narrow the covering tests, then
+   re-run; a skipped mutant is never a pass. A mutant that ran and timed out is not skipped: it is *killed* by timeout.
+   **Bounded runs:** every mutant run and every hand-planted fault run runs under a timeout derived from that run's own
+   recorded duration, never a fixed number: from the suite or case timings the project keeps (the gate's timing record,
+   or the stack runner's), for example about three times the median of its recent runs, and never above the cap
+   `run_timeout_cap_s` of the project's budgets file; a run with no history uses the cap itself. The suite budget
+   (`default_suite_budget_s`) is the duration target for OVER-BUDGET reporting and is never used as a kill timeout. A
+   mutant or planted-fault run uses the duration of the covering cases' clean baseline run (the run before the plant). A
+   timeout is a failure, and for a mutant or planted fault that times out while a covering case is running it counts
+   as killed by timeout, recorded as such, provided the clean baseline run finished inside the bound, and the control
+   run replays it like any other kill (a planted fault's timeout is confirmed by a replay alone, unless the first run
+   already ran alone: the replay uses the same timeout, a second timeout confirms the kill, while a replay that ends
+   gives its own verdict; a timeout outside every covering case is confirmed the same
+   way and is invalid, like a failure there; when the cap clipped the bound (the timeout derived from the clean
+   baseline run is above the cap), a confirmed timeout is skipped, never killed or invalid: raise the cap); a plant
+   whose clean baseline run is already over the bound is skipped (not run): raise the bound within the cap or narrow the
+   cases, as for a mutant. A test that waits on a lock, a queue or the network sets its own short bound, never the
+   product's long default. A hanging run is never repeated in the hope that it passes (OR-06): the cause is
+   investigated. The replay alone of a timed-out plant is not such a retry: it confirms a kill, and a replay that ends
+   points at contention (a shared lock, the host's load) as the cause to investigate.
 5. **No false kills.** A kill counts only when it comes from the mutation: a control run replays each killed, errored
    or timed-out mutant's own test process **without** the mutation; a test that is red there made a false kill, and
    the run fails naming them. (Environments that intercept file access for mutation can make tests fail for reasons

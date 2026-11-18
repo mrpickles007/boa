@@ -41,7 +41,8 @@ The answers are recorded as an ADR "Project close-out" before any step runs.
    is removed and the secret rotated; a hit in history of a repository that will be shared is an owner decision (rewrite history or keep
    it private), never ignored.
 2. **Completeness:** `trace_check.py --close` at 0 mismatches (every live task DONE, every feature DONE and traced to
-   running tests, every contract closed and every clause tested, the residue register and the transit queue empty); release acceptance (full-scope mutation on the
+   running tests, every contract closed and every clause tested, the residue register and the transit queue empty); the docs sweep (OR-74: every user chapter of the project's user
+   documentation checked against what landed); release acceptance (full-scope mutation on the
    delicate paths, end to end with real client types, security re-audit, zero open findings).
 3. **Contracts:** every contract `closed` (implemented, tested, signed off), every contract test in the gate.
 4. **Freshness:** zero outdated pins except documented holds.

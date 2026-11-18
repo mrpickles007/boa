@@ -4,8 +4,10 @@
 It walks every relation that must hold between the project's records and reports each mismatch on one line:
 
   task-contract  every live leaf task of the plan names, in its `Contract / spec` cell (a plan table whose header
-                 has that column), the contract clauses (`C-<NAME>.<n>`), whole contracts (`C-<NAME>`: a spec-side
-                 task that writes or amends all of it) and `SPEC-` specs it writes, characterises or implements, or
+                 has that column: its text in any language of .boa/markers.json or one of its aliases, the same for
+                 the other columns below), the contract clauses (`C-<NAME>.<n>`), whole contracts (`C-<NAME>`: a
+                 spec-side task that writes or amends all of it) and `SPEC-` specs it writes, characterises or
+                 implements, or
                  `none: <category>` (a category of CATEGORIES) for a task with no external surface; every contract it
                  names is in the contracts index and lists the task, every clause it names is defined, and every
                  task a contract lists names the contract (or one of its clauses) back;
@@ -46,7 +48,10 @@ It walks every relation that must hold between the project's records and reports
                  keywords or text); with --close no bug is open;
   pending-fold   every line of <lead dir>/plan-additions-pending.md and owner-rules-pending.md after their last fold
                  marker (a `# … Folded by …` line, one `#` only; `- ` and `## ` lines, except "do not fold" ones) is
-                 not folded yet.
+                 not folded yet;
+  unread         every record the check reads (the plan aside: that one is fatal, exit 2) that exists and is not a
+                 regular file (a FIFO, a device, a socket, a directory) is named, never opened: a stat comes first, so
+                 a FIFO never hangs the check.
 
 Tests that run: the files matching BOA_TEST_GLOBS (space-separated globs relative to the root, `**` for any depth;
 set per stack) minus those matching BOA_TEST_EXCLUDES, tracked by git when the root is a git checkout; only their
@@ -79,7 +84,8 @@ column numbers, `count` = the stated-count regex, `numbered` = first column 1..N
 tab-separated file with a header row; `key` and `owners` = column names; lines starting with # skipped).
 
 Output: one `MISMATCH <relation>: <detail>` line per mismatch, then `MISMATCHES: <n>`. Exit 0 only at 0 mismatches,
-1 otherwise, 2 on a usage error or when the plan cannot be read. `--report` first prints the feature report (counts
+1 otherwise, 2 on a usage error or when the plan cannot be read (a plan header naming one column twice included).
+`--report` first prints the feature report (counts
 per milestone — a feature's milestone is the latest milestone of its tasks —, status DONE / in progress / TODO, the
 tests each feature is traced to) when the feature relation has no mismatch. `--close` is the train mode plus the
 close-out relations: every contract closed, an empty transit queue, every pending fold folded (as always), the residue
@@ -152,24 +158,18 @@ CONTRACT_ANN = re.compile(r"^\s*(?://|#|/?\*+)\s*@covers-contract\b(.*)$")
 CONTRACT_BODY = re.compile(r"^\s*(" + CID + r"(?:\.[A-Z0-9]+(?:-[A-Z0-9]+)*)?)\s+(" + TID + r")\s*(?:\*/)?\s*$")
 VERSION = re.compile(r"\d+(?:\.\d+)*")
 FIRST_VERSION = re.compile(r"0(?:\.\d+)*|1(?:\.0)*")   # 0.x (pre-release) or 1, 1.0, 1.0.0: no ADR needed
-# The plan table columns trace_check reads, and the fold marker: machine-recognised words of .boa/markers.json (every
-# accepted language, English always; lower-case header texts); the first column marks a table as a task table.
+# The plan table columns trace_check reads (short name -> markers.json entry), and the fold marker: machine-recognised
+# words of .boa/markers.json; a header row is resolved by markers.plan_header only (every language, the aliases).
 COLUMN_KEYS = {"contract": "plan.contract_column", "acceptance": "plan.acceptance_column", "edge": "plan.edge_column",
                "managed": "plan.managed_column"}
 
-
-def columns_of(data: dict) -> dict[str, set[str]]:
-    """{column key: its accepted header texts, lower case} from a markers file's data."""
-    return {k: {t.lower() for t in markers.texts(key, data)} for k, key in COLUMN_KEYS.items()}
-
-
 MARKERS_ERROR = ""   # an unreadable markers file is fatal (exit 2), reported by check()
+_MARKERS: dict = {}
 try:
     _MARKERS = markers.load()
-    COLUMNS = columns_of(_MARKERS)
     FOLD = markers.fold_regex(_MARKERS)
 except markers.MarkersError as _exc:
-    MARKERS_ERROR, COLUMNS, FOLD = str(_exc), {k: set() for k in COLUMN_KEYS}, re.compile(r"(?!)")
+    MARKERS_ERROR, FOLD = str(_exc), re.compile(r"(?!)")
 NONE = ("", "—", "-")
 # A fold marker: a level-1 comment/heading line ("# [<time>] Folded by TRAIN-n …"); a "## " pending entry that only
 # mentions folding is an entry, not a marker.
@@ -778,7 +778,20 @@ def id_list(cell: str) -> list[str]:
     return [] if bare(cell) in NONE else [bare(x) for x in cell.split(",") if bare(x)]
 
 
+UNREAD: dict[str, str] = {}   # the files a run found special (FIFO, device, socket, directory): never opened
+
+
 def read(root: str, rel: str) -> str | None:
+    """A file's text, or None when it is missing or unreadable, or exists and is not a regular file: one stat first,
+    so a FIFO never hangs the check (recorded in UNREAD, reported as a mismatch naming it)."""
+    import boa_tool
+    try:
+        kind = boa_tool.special_kind(os.path.join(root, rel))
+    except OSError:
+        return None
+    if kind is not None:
+        UNREAD[slash_rel(os.path.relpath(os.path.join(root, rel), root))] = kind   # relative to the root, as printed
+        return None
     try:
         with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
             return fh.read()
@@ -786,14 +799,21 @@ def read(root: str, rel: str) -> str | None:
         return None
 
 
-def plan_rows(text: str, columns: dict[str, set[str]] | None = None) -> dict[str, dict[str, str | None]]:
-    """task id -> {key of COLUMNS: its cell, None when the table has no such column}, from every plan table (outside
-    the plan block) whose header has the `Contract / spec` column (COLUMNS, or `columns` for the language self-check)."""
-    cols = columns if columns is not None else COLUMNS
+def plan_rows(text: str, data: dict | None = None) -> dict[str, dict[str, str | None]]:
+    """task id -> {short name of COLUMN_KEYS: its cell, None when the table has no such column}, from every plan table
+    (outside the plan block) whose header row names the contract column; the header is resolved by
+    markers.plan_header with the loaded markers file (or `data`, for the language self-check). A row whose first cell
+    is a task id is a task row, never a header (a cell that happens to equal a column name or an alias). A plan header
+    naming one column twice, or a second row of one task in the plan tables (a later table would silently mask the
+    first row's gaps), raises markers.MarkersError, its lines named."""
+    data = data or _MARKERS
     out: dict[str, dict[str, str | None]] = {}
+    first: dict[str, int] = {}   # task id -> the line of its row
     col: dict[str, int] = {}
+    head = 0                     # the line of the current plan table's header
+    via = ""                     # the alias that made it a plan table ("" when the contract column has its own name)
     in_block = False
-    for line in text.splitlines():
+    for n, line in enumerate(text.splitlines(), 1):
         s = line.strip()
         if s == plan_lanes.BEGIN:
             in_block = True
@@ -804,16 +824,27 @@ def plan_rows(text: str, columns: dict[str, set[str]] | None = None) -> dict[str
             col = {} if not s.startswith("|") else col
             continue
         c = cells(s)
-        low = [x.lower() for x in c]
-        if any(x in cols["contract"] for x in low):
-            col = {k: next(i for i, x in enumerate(low) if x in names) for k, names in cols.items()
-                   if any(x in names for x in low)}
-            continue
-        if not col or set(c[0]) <= set("-: "):
-            continue
         tid = bare(c[0])
-        if re.fullmatch(TID, tid):
-            out[tid] = {k: (c[col[k]] if k in col and len(c) > col[k] else None) for k in cols}
+        if not re.fullmatch(TID, tid):
+            try:
+                found = markers.plan_header(c, data)
+            except markers.MarkersError as exc:
+                raise markers.MarkersError(f"line {n}: {exc}") from None
+            if found is not None:
+                col, head = {k: found[key] for k, key in COLUMN_KEYS.items() if key in found}, n
+                cell = c[found[COLUMN_KEYS["contract"]]]
+                via = cell.strip() if markers.is_alias(COLUMN_KEYS["contract"], cell, data) else ""
+            continue
+        if col:
+            if tid in first:
+                fix = (f"rename that table's header, or drop the alias '{via}' (of the contract column) that "
+                       "makes it one" if via else "rename that table's header (an archive need not be a plan table) or keep one row")
+                raise markers.MarkersError(
+                    f"line {n}: {tid} has a second row in a plan table (its first is at line {first[tid]}; the table "
+                    f"of line {n} is a plan table because its header, line {head}, names the contract column): one row "
+                    f"per task in the plan tables — {fix}")
+            first[tid] = n
+            out[tid] = {k: (c[col[k]] if k in col and len(c) > col[k] else None) for k in COLUMN_KEYS}
     return out
 
 
@@ -985,9 +1016,12 @@ def check(root: str, close: bool) -> tuple[list[tuple[str, str]], str | None, Re
         main = boa_config.main_of(root)   # the lead dir is the MAIN checkout's, also when --root is a worktree
     except boa_config.ConfigError as exc:
         return mm, str(exc), None
+    UNREAD.clear()
     plan_text = read(root, PLAN)
     if plan_text is None:
-        return mm, f"cannot read the plan {PLAN}", None
+        kind = UNREAD.get(slash_rel(PLAN))
+        return mm, (f"the plan {PLAN} is {kind}, not a regular file: not read" if kind
+                    else f"cannot read the plan {PLAN}"), None
     try:
         tasks, superseded, closing, outside, perr = plan_lanes.parse(plan_text)
     except plan_lanes.PlanError as exc:
@@ -1011,7 +1045,10 @@ def check(root: str, close: bool) -> tuple[list[tuple[str, str]], str | None, Re
         clauses[cid] = clauses_of(cid, text, mm, where) if text is not None else set()
 
     # task -> contract / clause / spec, and the rest of its row
-    rows = plan_rows(plan_text)
+    try:
+        rows = plan_rows(plan_text)
+    except markers.MarkersError as exc:   # the plan's columns cannot be told apart: nothing of its rows can be judged
+        return mm, f"plan {PLAN}: {exc}", None
     task_owner_and_edges(tasks, leaves, rows, mm)
     cites: dict[str, set[str]] = {}
     for tid in leaves:
@@ -1177,6 +1214,7 @@ def check(root: str, close: bool) -> tuple[list[tuple[str, str]], str | None, Re
     for name in ("plan-additions-pending.md", "owner-rules-pending.md"):
         for line in pending_lines(read(root, os.path.join(leaddir, name)) or ""):
             mm.append(("pending-fold", f"{lead}/{name}: not folded: {line[:140]}"))
+    mm += [("unread", f"{rel}: {kind}, not a regular file: not read") for rel, kind in sorted(UNREAD.items())]
     return mm, None, (result if not ferr else None)
 
 

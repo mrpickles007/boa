@@ -1,6 +1,6 @@
 {
   "name": "boa",
-  "description": "BOA (Build On Autopilot): one skill that teaches an agent to run a software project end to end with a complete working discipline.",
+  "description": "BOA (Build On Autopilot): an agent skill that teaches an AI coding agent to run a software project end to end (greenfield, brownfield or refactor) with a complete working discipline.",
   "owner": {
     "name": "BOA"
   },
@@ -8,9 +8,21 @@
     {
       "name": "boa",
       "source": "./",
-      "description": "The build-on-autopilot skill: plan, parallel lanes, adversarial review, tests, merge trains, memory, measuring and safety, plus the few generic tools the discipline needs.",
-      "license": "AGPL-3.0-only AND MIT-0",
-      "category": "development"
+      "description": "The build-on-autopilot agent skill: a lead agent and sub-agents (builder, adversarial reviewer, tester, integrator) on a plan, parallel lanes on git worktrees, merge trains, a typed project memory with hybrid search, measuring, safety, pause, resume and close, plus the few generic tools the discipline needs.",
+      "license": "AGPL-3.0-only AND CC-BY-4.0 AND MIT",
+      "category": "development",
+      "keywords": [
+        "agent-skill",
+        "multi-agent",
+        "autonomous-coding",
+        "code-review",
+        "git-worktrees",
+        "merge-train",
+        "project-memory",
+        "greenfield",
+        "brownfield",
+        "refactor"
+      ]
     }
   ]
 }

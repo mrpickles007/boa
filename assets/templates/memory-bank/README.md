@@ -19,7 +19,7 @@ of previous ones; these files are the only continuity. The rules here are enforc
 | `09-OPERATING-PROCEDURES.md` | **Binding.** How the lead and the agents actually work: session start, live state, briefs, lanes, trains, HITL, disk, safety, deployment, pause/resume, close-out, durations. | When a procedure changes, in the same train. |
 | `10-METALEARNING.md` | Curated lessons about the way of working, from every agent's metacognitive trace, each with the change it caused. | At every train (lead). |
 | `active-context.md` | The single "where are we right now" file: milestone, lanes, Open HITL, blockers, next action. Short; history goes to 05. | Lead, continuously; the integrator edits only the lines the lead names. |
-| `.memory-ids.jsonl` | The memory id ledger: one line per id `memory_write.py --ingest` assigns (id, file, datetime, brief, links). Written ONLY by the tool; a block whose id is not in it (a hand-written id) fails the lint, the PostToolUse hook and the pre-commit. | By `memory_write.py` only, never by hand. |
+| `.memory-ids.jsonl` | The memory id ledger: one line per id `memory_write.py --ingest` assigns (id, file, datetime, brief, links). Written ONLY by the tool; a block whose id is not in it (a hand-written id) fails the lint, the post-tool hook and the pre-commit. | By `memory_write.py` only, never by hand. |
 | `RESUME.md` | Pointer file: read order and where the live state is. Holds no state, so it never goes stale. | Only when the read order or a location changes. |
 
 ## The loop (what you MUST do)
@@ -78,7 +78,7 @@ metalearning entry (10), a goal, a requirement, an invariant, a lead note, an ag
   --format-only`, which may carry `supersedes="memory-N"` (an existing final id) or `supersedes-brief="<brief>"`
   (another new block of the same lane or batch); the fold's `memory_write.py --ingest` resolves them and stamps both
   directions atomically. The id ledger `memory-bank/.memory-ids.jsonl`, written only by the tool, makes a
-  hand-written id fail the lint, the PostToolUse hook and the pre-commit.
+  hand-written id fail the lint, the post-tool hook and the pre-commit.
 - Supersession chains are always coherent: a memory is superseded at most ONCE (a single `superseded-by`); to
   replace a memory that is already superseded, supersede the CURRENT head of its chain (`memory_search.py --chain
   <id>` shows it); one memory may supersede several current memories (a merge); two memories superseding the same
@@ -101,8 +101,8 @@ metalearning entry (10), a goal, a requirement, an invariant, a lead note, an ag
 - **Checks:** `.boa/tools/memory_lint.py` validates every block (fields, the exact datetime format, the type, ids
   unique and progressive, every `supersedes` id exists, `supersedes` and `superseded-by` agree both ways, no cycles,
   no fork, every supersession forward in time);
-  the `pre-commit` git hook runs `memory_lint.py --staged` and refuses a commit with broken links; the PostToolUse hook
-  `.boa/hooks/memory_check.py` lints a memory file right after a Write or Edit of it; `.boa/tools/memory_search.py`
+  the `pre-commit` git hook runs `memory_lint.py --staged` and refuses a commit with broken links; the post-tool hook
+  `.boa/hooks/memory_check.py` lints a memory file right after a file write of it; `.boa/tools/memory_search.py`
   finds memories by keyword, type, task id or date (current ones by default, the supersession chain on request).
 - **Legacy cutoff:** in a memory file that already held notes before BOA (brownfield, refactor), the line
   `<!-- boa:memory-cutoff -->` separates them: everything above it is legacy and exempt from the checks; every

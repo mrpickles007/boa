@@ -98,7 +98,8 @@ Markers it reads:
   `C-<NAME>.<n>` it implements or amends (the whole `C-<NAME>` for the spec-side task that writes it) and the
   `SPEC-…` specs (comma-separated), or `none: <category>` (a category of `trace_check.py`: tooling, process,
   documentation, environment, …) with its acceptance criteria as its contract; every row lists its `Edge cases` (or
-  `none, because …`) and has a `Managed by` owner.
+  `none, because …`) and has a `Managed by` owner. These columns are found by their names in `.boa/markers.json`
+  (any language, or the `aliases` an existing plan's own names are mapped to).
 - **Specifications (02):** each `SPEC-…` id is defined in 02 or under `docs/specs/`; the contracts index sits between
   `<!-- contracts:begin -->` and `<!-- contracts:end -->` with the columns
   `ID | Version | Where | Consumers | Compatibility | Tasks | Tests | Features | Status` (status `open|closed`;

@@ -1,7 +1,7 @@
 ---
 description: (Optional manual shortcut) Flush durable state into the memory bank. The lead does this on its own (AGENTS.md §3); use for a manual flush, e.g. before a likely compaction.
 ---
-<!-- BOA neutral command metadata: the header above (description, optional argument-hint) is converted by the agent to its runtime's format at bootstrap; the body is the runtime-neutral contract. -->
+<!-- BOA neutral command metadata: the header above (description, optional arguments) is converted by the agent to its runtime's format at bootstrap and at every re-wire, after checking the runtime's latest documentation and installed version (OR-63); the body is the runtime-neutral contract. -->
 
 Reconcile the memory bank with reality:
 

@@ -62,15 +62,21 @@ shows a chain.
 Recall is as binding as writing: agents search the memory before acting, at the moments `.boa/memory-types.json`
 names (task start or resume, an error or surprise, before a decision or a contract change), and cite the memory ids
 they relied on. When a problem occurs, memory comes first: search for it before trying a fix. The session status hook
-injects the memories of every active task; the recall hook searches the error text of a failed call and injects the
-matching lessons; a sub-agent gets its task's memories through its brief.
+injects the memories of every active task; so does the sub-agent start hook (the memory reminder and every active
+lane's memories, where the runtime injects context at that moment; the context the runtime accepts is capped, and above
+the cap the agent sees a preview only); the recall hook searches the error text of a failed call and injects the
+matching lessons; a sub-agent gets its own task's memories through its brief. The other moments (a decision, planning,
+a contract change, an update, the close-out) have no event to hook: the agent searches the memory itself at each.
 
 `memory_search.py --query "<text>"` is hybrid: BM25 over the blocks finds the candidates, then the sentences that
 hold a query word are re-ranked by meaning with the embedding environment `boa install` built in `.boa/embed/`
 ([02 Install and wiring](02-install-and-wiring.md#the-memory-search-environment)). With fewer keyword candidates than
 the limit, every remaining memory is compared by meaning, so a search never returns a false zero. Vectors are cached
-by content hash (a cache, safe to delete, never a database); nothing goes to the network at query time. Without the
-environment, search ranks by BM25 alone and warns. Filters: `--keyword`, `--type`, `--moment`, `--task`,
+by content hash in `.boa/embed/cache/memory-vectors.bin`, a compact binary file that new vectors are appended to (a
+cache, safe to delete, never a database; the exact numbers the model returned, so a cached vector ranks exactly as a
+fresh one); nothing goes to the network at query time. The bank is parsed without its lint checks and the cosine of
+the fallback uses each vector's cached length, so the time that grows with the bank stays small; most of a query's
+time is the model's start. Without the environment, search ranks by BM25 alone and warns. Filters: `--keyword`, `--type`, `--moment`, `--task`,
 `--since`/`--until`, `--error`.
 
 ## The lead directory
@@ -121,7 +127,11 @@ plan column headers) live in `.boa/markers.json`. To change the product language
 the new language; English stays accepted as an alias, and the marker-bearing sections of the installed files are
 regenerated. `boa language show` and `boa language check` read and validate it
 ([tool card](../assets/templates/agent-handbook.md#tool-card-language-and-markers)). The memory syntax is never
-translated.
+translated. A plan that already names its columns in its own words (an existing project's) keeps them: its names are
+added as `aliases` of the plan columns in `.boa/markers.json`, which every tool reading the plan accepts and the
+language change keeps as they are. The agent edits a copy of the file and checks it before moving it into place:
+`BOA_MARKERS=<copy> sh .boa/bin/boa language check` in a POSIX shell; in the Windows command prompt
+`set "BOA_MARKERS=<copy>" && .boa\bin\boa.cmd language check`, then `set BOA_MARKERS=` to clear the variable.
 
 ## Other memory systems
 

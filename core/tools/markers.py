@@ -5,7 +5,9 @@ Purpose:  every phrase a BOA hook or tool recognises in text people write — th
           section the report capture reads (and its "none"), the review classes, the fold marker of the staging
           files, the plan's column headers — lives in ONE file, English always kept (older reports still parse) plus
           the current product language; `boa language set` switches that language only after every hook recognised
-          samples written in it.
+          samples written in it. A plan column entry may also carry `"aliases"`: the project's own header names for
+          that column (an existing plan's), in any language; `plan_header` is the one resolution of a plan table's
+          header row for every reader.
 When:     read by the report capture (sub-agent stop), lead-status, trace_check and memory_write; run by the lead
           when the product language changes (09 §31, OR-65): `boa language set <lang> --texts FILE` FIRST, reports
           stay English until it passes.
@@ -17,10 +19,20 @@ Outputs:  `.boa/markers.json` (rewritten only by `set`); the marker-bearing sect
 Limits:   the memory syntax and the standard block syntax (`@@@memory`, `@endmemory`, field and type names, any
           `@@@…`/`@end…` line) are never markers and never translated — the check refuses an entry that redefines
           them; regen writes no runtime directory (the agent copies .boa/agents and .boa/commands into its runtime
-          again, as when it wired them).
+          again, as when it wired them). Aliases exist only for the plan columns (the `plan.*` entries); `set` keeps
+          them as they are (they are header texts of the project's plan, never translated).
+
+  Plan column aliases (added by hand: edit a copy of the markers file, check it with `BOA_MARKERS=<copy> boa language
+  check`, then move it into place):
+      "plan.edge_column": {"en": "Edge cases", "aliases": ["Edge", "Corner cases"]}
+  A header cell names a column when it equals one of its texts (any language) or aliases, compared without case and
+  without outer spaces (inner spaces count). The check refuses an alias that is not a non-empty string, holds an
+  unescaped `|`, redefines the block syntax, or equals a text or alias of another entry; `plan_header` refuses a table
+  whose header names one column twice (two cells resolving to the same entry).
 
   boa language show                 the product language and every entry (`<key> = <texts>`), current text first
-  boa language check                validate the markers file (exit 1, one line per problem)
+  boa language check                validate the markers file and read a sample plan table with it (exit 1, one
+                                    line per problem)
   boa language texts <key>          every accepted text of one entry, one per line
   boa language set <lang> --texts FILE
       FILE: a JSON object `{<key>: <text in that language>}` the agent wrote (translated; the user may correct it).
@@ -57,6 +69,9 @@ BLOCK_SYNTAX = re.compile(r"@@@|@end|\b(?:finding|leftover|requirement|memory)\b
 # The fixed words of the standard blocks; a marker text equal to one of them would redefine a block.
 RESERVED = {"@@@memory", "@endmemory", "@@@finding", "@endfinding", "@@@leftover", "@endleftover",
             "@@@requirement", "@endrequirement"}
+# The plan's columns read by name: a plan table is a table whose header row names the first one (the contract column).
+PLAN_COLUMNS = ("plan.contract_column", "plan.acceptance_column", "plan.edge_column", "plan.managed_column")
+ALIASES = "aliases"   # a plan column's optional list of the project's own header names (LANG never matches it)
 
 
 class MarkersError(Exception):
@@ -82,25 +97,58 @@ def problems(data: object) -> list[str]:
             out.append(f"{key}: no English text (English is always kept)")
             continue
         for lg, text in texts.items():
-            if not LANG.fullmatch(str(lg)) or not isinstance(text, str) or not text.strip():
+            if lg == ALIASES:
+                out += alias_problems(key, text)
+            elif not LANG.fullmatch(str(lg)) or not isinstance(text, str) or not text.strip():
                 out.append(f"{key}.{lg}: not a language code with a non-empty text")
             elif text.strip().lower() in RESERVED or BLOCK_SYNTAX.search(text):
                 out.append(f"{key}.{lg}: '{text}' redefines the standard block syntax (always English, never a marker)")
         if isinstance(lang, str) and lang != "en" and lang not in texts:
             out.append(f"{key}: no text for the current language '{lang}'")
-    seen: dict[str, str] = {}   # two entries with one text: the hooks could not tell them apart
+    seen: dict[str, str] = {}   # two entries with one text (or alias): the hooks could not tell them apart
     for key, texts in marks.items():
-        for text in (texts.values() if isinstance(texts, dict) else []):
+        if not isinstance(texts, dict):
+            continue
+        aliases = texts.get(ALIASES) if isinstance(texts.get(ALIASES), list) else []
+        for text in [t for lg, t in texts.items() if lg != ALIASES] + aliases:
             if not isinstance(text, str):
                 continue
-            other = seen.setdefault(text.strip().lower(), key)
+            other = seen.setdefault(norm(text), key)
             if other != key:
                 out.append(f"{key}: '{text}' is also the text of {other} (the hooks could not tell them apart)")
     return out
 
 
+def alias_problems(key: str, aliases: object) -> list[str]:
+    """The aliases of one entry: a list of non-empty header texts, only on a plan column."""
+    if key not in PLAN_COLUMNS:
+        return [f"{key}.{ALIASES}: aliases exist only for the plan columns ({', '.join(PLAN_COLUMNS)})"]
+    if not isinstance(aliases, list):
+        return [f"{key}.{ALIASES}: not a list of header texts"]
+    out = []
+    for a in aliases:
+        if not isinstance(a, str) or not a.strip():
+            out.append(f"{key}.{ALIASES}: '{a}' is not a non-empty header text")
+        elif re.search(r"(?<!\\)\|", a):
+            out.append(f"{key}.{ALIASES}: '{a}' holds an unescaped '|' (a table cell never does; write it '\\|')")
+        elif a.strip().lower() in RESERVED or BLOCK_SYNTAX.search(a):
+            out.append(f"{key}.{ALIASES}: '{a}' redefines the standard block syntax (always English, never a marker)")
+    return out
+
+
+def norm(text: str) -> str:
+    """The form a header cell and a marker text are compared in: no outer whitespace, lower case (inner spaces kept)."""
+    return text.strip().lower()
+
+
 def load() -> dict:
     p = path()
+    try:
+        kind = boa_config.special_kind(p)   # one stat before the open: a FIFO never hangs a reader of the markers
+    except OSError as exc:
+        raise MarkersError(f"{p}: unreadable ({exc})") from None
+    if kind is not None:
+        raise MarkersError(f"{p}: {kind}, not a regular file: not read")
     try:
         with open(p, encoding="utf-8") as fh:
             data = json.load(fh)
@@ -115,13 +163,50 @@ def load() -> dict:
 
 
 def texts(key: str, data: dict | None = None) -> list[str]:
-    """Every accepted text of an entry: the current language first, then the others, English always among them."""
+    """Every accepted text of an entry: the current language first, then the others, English always among them, then
+    its aliases (plan columns only)."""
     data = data or load()
     entry = data["markers"].get(key)
     if entry is None:
         raise MarkersError(f"unknown marker '{key}'")
     first = entry.get(data["language"]) or entry["en"]
-    return [first] + [t for t in dict.fromkeys(entry.values()) if t != first]
+    langs = [t for lg, t in entry.items() if lg != ALIASES]
+    return [first] + [t for t in dict.fromkeys(langs + entry.get(ALIASES, [])) if t != first]
+
+
+def is_alias(key: str, cell: str, data: dict | None = None) -> bool:
+    """True when the header cell names the column `key` through one of its aliases (not a language text)."""
+    data = data or load()
+    entry = data["markers"].get(key) or {}
+    if norm(cell) in {norm(t) for lg, t in entry.items() if lg != ALIASES}:
+        return False
+    return norm(cell) in {norm(a) for a in entry.get(ALIASES, [])}
+
+
+def plan_header(cells: list[str], data: dict | None = None) -> dict[str, int] | None:
+    """THE resolution of a plan table's header, for every reader of the plan by column name: {plan column key: the
+    index of the one cell naming it (a text in any language or an alias, compared by norm)}, or None when the row is
+    not a plan table's header (no cell names the contract column). A plan header naming one column twice is refused
+    (MarkersError): no reader may pick one of the two silently."""
+    data = data or load()
+    names = {norm(t): k for k in PLAN_COLUMNS for t in texts(k, data)}   # one key per text: problems() refuses a clash
+    found: dict[str, int] = {}
+    twice: list[str] = []
+    for i, cell in enumerate(cells):
+        key = names.get(norm(cell))
+        if key is None:
+            continue
+        if key in found:
+            twice.append(f"the header cells '{cells[found[key]].strip()}' and '{cell.strip()}' both name the column "
+                         f"{key}")
+            continue
+        found[key] = i
+    if PLAN_COLUMNS[0] not in found:
+        return None
+    if twice:
+        raise MarkersError("; ".join(twice) + " (its texts and aliases in markers.json): rename one of the cells, or "
+                           "drop that alias")
+    return found
 
 
 def regex(key: str, data: dict | None = None) -> str:
@@ -139,7 +224,6 @@ def self_check(data: dict) -> list[str]:
     """Feeds every hook its own samples written in the data's language (the hooks' own parsers); returns the failures."""
     import lead_status  # noqa: PLC0415  (they import this module)
     import report_capture as rc  # noqa: PLC0415
-    import trace_check  # noqa: PLC0415
     fails = []
     lang, t = data["language"], (lambda k: texts(k, data)[0])
     sample = (f"## {t('section.verdict')}\n{lang}\n- [{t('review.blocking')}] a ({t('review.fixed')})\n"
@@ -164,13 +248,24 @@ def self_check(data: dict) -> list[str]:
     staging = f"- a line\n# [2000-01-01T00:00:00Z] {t('fold')} TRAIN-001: everything above. Pending below.\n- pending\n"
     if not any(fold_regex(data).match(x) for x in staging.splitlines()):
         fails.append(f"the fold marker '{t('fold')}' is not found in a sample staging file")
-    keys = ("plan.contract_column", "plan.acceptance_column", "plan.edge_column", "plan.managed_column")
-    plan = ("| ID | Title | MS | " + " | ".join(t(k) for k in keys) + " | Deps |\n|---|---|---|---|---|---|---|---|\n"
-            "| T-001 | x | M1 | C-A | ac | edge | lead | — |\n")
-    row = trace_check.plan_rows(plan, trace_check.columns_of(data)).get("T-001") or {}
+    return fails + plan_self_check(data)
+
+
+def plan_self_check(data: dict) -> list[str]:
+    """trace_check reads a sample plan table (the plan template's header, in the data's language) with the data's
+    texts and aliases; run by `set` and by `check` (an alias equal to another header name of that table is refused)."""
+    import trace_check  # noqa: PLC0415  (it imports this module)
+    t = (lambda k: texts(k, data)[0])
+    plan = ("| ID | Title | MS | " + " | ".join(t(k) for k in PLAN_COLUMNS) + " | Deps |\n"
+            "|---|---|---|---|---|---|---|---|\n| T-001 | x | M1 | C-A | ac | edge | lead | — |\n")
+    why = ""
+    try:
+        row = trace_check.plan_rows(plan, data).get("T-001") or {}
+    except MarkersError as exc:   # the one class: the script entry runs as this module (see the end of the file)
+        row, why = {}, f" ({exc})"
     if row != {"contract": "C-A", "acceptance": "ac", "edge": "edge", "managed": "lead"}:
-        fails.append("trace_check: the plan columns " + ", ".join(f"'{t(k)}'" for k in keys) + " not read")
-    return fails
+        return ["trace_check: the plan columns " + ", ".join(f"'{t(k)}'" for k in PLAN_COLUMNS) + f" not read{why}"]
+    return []
 
 
 # One marker line: a begin (with its keys) or an end, alone on its line, LF or CRLF.
@@ -187,7 +282,26 @@ def regen_files(root: str) -> list[str]:
         for d, dirs, fs in os.walk(top) if os.path.isdir(top) else []:
             dirs[:] = sorted(x for x in dirs if x not in (".git", "state", "logs", "__pycache__"))
             paths += [os.path.join(d, f) for f in sorted(fs) if f.endswith(".md")]
-    return paths
+    return [p for p in paths if regular(p)]
+
+
+SKIPPED: set[str] = set()   # the special files already said in this run
+
+
+def regular(path: str) -> bool:
+    """A regular file to read (one stat, no open: a FIFO would hang the rewrite); a FIFO, a device, a socket or a
+    directory named *.md is skipped with one line naming it."""
+    import boa_tool
+    try:
+        kind = boa_tool.special_kind(path)
+    except OSError:
+        return False
+    if kind is not None:
+        if path not in SKIPPED:
+            SKIPPED.add(path)
+            print(f"markers: skipped {path}: it is {kind}, not a regular file", file=sys.stderr)
+        return False
+    return True
 
 
 def render_section(keys: str, data: dict) -> str:
@@ -254,6 +368,25 @@ def regen(root: str, data: dict, check: bool) -> tuple[list[str], list[str]]:
     return changed, errs
 
 
+def dumps(data: dict) -> str:
+    """The markers file in the shipped layout, keys in their order: two-space indentation, one line per marker entry
+    (`"key": {"en": "...", "<lang>": "..."}`), so a `set` changes only the lines it must and a versioned file
+    diffs cleanly."""
+    out, items = ["{"], list(data.items())
+    for i, (k, v) in enumerate(items):
+        comma = "," if i < len(items) - 1 else ""
+        if k == "markers" and isinstance(v, dict):
+            out.append(f"  {json.dumps(k)}: {{")
+            entries = list(v.items())
+            out += [f"    {json.dumps(mk, ensure_ascii=False)}: {json.dumps(mv, ensure_ascii=False)}"
+                    + ("," if j < len(entries) - 1 else "") for j, (mk, mv) in enumerate(entries)]
+            out.append("  }" + comma)
+        else:
+            out.append(f"  {json.dumps(k, ensure_ascii=False)}: "
+                       + json.dumps(v, ensure_ascii=False, indent=2).replace("\n", "\n  ") + comma)
+    return "\n".join(out + ["}"]) + "\n"
+
+
 def cmd_set(lang: str, texts_file: str, root: str) -> int:
     if not LANG.fullmatch(lang):
         print(f"markers: '{lang}' is not a language code", file=sys.stderr)
@@ -298,8 +431,7 @@ def cmd_set(lang: str, texts_file: str, root: str) -> int:
     p = path()
     tmp = f"{p}.tmp.{os.getpid()}"
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
+        fh.write(dumps(data))
     os.replace(tmp, p)
     print(f"markers: product language = {lang}; self-check passed; English kept as aliases")
     changed, errs = regen(root, data, False)
@@ -311,7 +443,8 @@ def cmd_set(lang: str, texts_file: str, root: str) -> int:
         print("markers: language switched; run `boa language regen` to finish (the files above are still stale)",
               file=sys.stderr)
     if changed:
-        print("markers: copy .boa/agents and .boa/commands into your runtime's directories again (the wiring step)")
+        print("markers: copy .boa/agents and .boa/commands into your runtime's directories again (the wiring step: check "
+              "the runtime's latest documentation and installed version first, OR-63)")
     return 1 if errs else 0
 
 
@@ -357,6 +490,11 @@ def main(argv: list[str]) -> int:
             return 1
         return 0
     if a.cmd == "check":
+        bad = plan_self_check(data)
+        for b in bad:
+            print(f"markers: {b}", file=sys.stderr)
+        if bad:
+            return 1
         print(f"markers: ok ({len(data['markers'])} entries, language {data['language']})")
         return 0
     print(f"product language: {data['language']}")
@@ -366,4 +504,7 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    # Run as the module `markers`, never as `__main__`: the tools it self-checks import `markers`, and a second copy of
+    # this file would have its own MarkersError, which no `except` here would catch.
+    import markers  # noqa: E402  (this very file, by its module name)
+    sys.exit(markers.main(sys.argv[1:]))

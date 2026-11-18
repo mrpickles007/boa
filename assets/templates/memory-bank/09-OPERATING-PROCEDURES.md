@@ -18,16 +18,22 @@
 2. Run `.boa/bin/lead-status.sh`: one screen with every lane (head, ahead, PR, last agent's verdict, suggested next
    step, newest registry line), admission (load, memory, lane cap), warnings, open PRs, Open HITL, new guard
    denials, DONE/total (the disk alert and the suite timings come from the project's own measuring: step 1 and
-   §15). The SessionStart hook already injected its top lines plus the resume protocol
+   §15). The session-start hook already injected its top lines plus the resume protocol
    and a three-line memory-writing reminder (memories only through `.boa/tools/memory_write.py`, the most specific
    type, supersede — never edit).
 3. State in one line: active milestone, active lanes, next action.
-3b. After a runtime update or on a new machine, re-run the capability self-assessment (OR-63) and update the
-   capabilities record before starting lanes.
+3b. After a runtime update, on a new machine, in a runtime the capabilities record does not name (or whose wiring
+   is absent), or when the runtime that last worked on the project is not this one, re-run the capability
+   self-assessment (OR-63), wire this runtime alongside the others (never touching their wiring), set the per-runtime
+   keys again (`BOA_SCRATCH_ROOT`, `BOA_SCRATCH_GLOB`) and update the capabilities record before starting lanes;
+   paused: §13 "Resume". BOA is installed when `.boa/installed.list` exists or BOA's marked block is in `AGENTS.md` or
+   `.gitignore` (a fresh clone, no `.boa/commands/` or `.boa/bin/`: `boa install` from the BOA package first); a
+   `.boa/config.env` alone is an install to finish. Installed and the plan has tasks: never a bootstrap again,
+   whatever door you came in by.
 4. Where the runtime cannot resume an agent across sessions (capabilities record), resume every lane at its recorded stage with **new** agents, giving each one
    the lane's last recorded state: the registry line, the newest entries of `<lead>/lanes/<T>.md` (the previous
    agent's final report, verbatim), the head SHA, the open findings and its `.lane-resume/<role>.md` if any. Within
-   the new session OR-16 applies again (same agent per role per task).
+   the new session OR-16 applies again (same agent per role per task; resume or fresh: §5.3).
 5. After an interrupted turn inside a session: first check which agents finished (OR-17; their reports are in
    `<lead>/lanes/<T>.md`), advance those lanes, tell the owner briefly.
 6. Start the project's disk measurement if it is not running (project-wiring "measure commands").
@@ -43,7 +49,7 @@
   - **Agents registry** (the sub-agent lifecycle, §5.3): the project's clock (project-wiring "usage clock and throughput")
     records every spawn under the first task id of its description and lists, per task, role, agent id, model,
     started and state: the id to resume next to each lane.
-  - `lanes/<T>.md` — the **lane journal**, written automatically by the SubagentStop hook
+  - `lanes/<T>.md` — the **lane journal**, written automatically by the sub-agent stop hook
     (`.boa/bin/lane-journal.sh`): one entry per agent stop, `## <UTC time> | <agent type> | <agent id> | <status>` +
     the agent's final report (capped; copied as written: the journal is private and git-excluded). Agents without a task id land in `lanes/_unassigned.md`. Never
     edited by hand. `lanes/<T>-<role>.md` = resume or closure copies (§13).
@@ -57,8 +63,8 @@
 
 ## 3. Filling lanes
 1. Eligible tasks: `python3 -I .boa/tools/plan_lanes.py` (wave 1 = deps DONE, no hotspot shared with a running
-   lane; `--check` green after any plan edit). Product tasks first; tooling tasks when they unblock product work or
-   are planned like product tasks (OR-23).
+   lane; `--check` green after any plan edit). Product tasks first; tooling tasks when they unblock product work, measurably speed it up (a faster
+   gate or suite, a runner wired) or are planned like product tasks (OR-23).
 2. Admission: at most {{BOA_LANE_CAP}} lanes (set from the capabilities record, recalibrated to the machine), one
     integrator, a heavy-step
    semaphore when heavy runs are local, sized by the test-execution decision (project-wiring "light and heavy suites"); start a lane only when `lead-status.sh` shows admission (load and free
@@ -68,7 +74,7 @@
 3. One worktree per task, from current `origin/{{BOA_MAIN_BRANCH}}`:
    `.boa/bin/lane-worktree.sh add <T> <branch>` (branch per `{{BOA_BRANCH_GRAMMAR}}`; lean: the sparse and
    dependency rules of the stack plug-in); `.boa/bin/lane-worktree.sh remove <T>` at the end.
-4. Append the start to `<lead>/lanes.md`, choose the builder tier (§5.2) and brief it (§4). The Agent call's
+4. Append the start to `<lead>/lanes.md`, choose the builder tier (§5.2) and brief it (§4). The sub-agent spawn's
    description starts with the task id, so the agents registry records the spawned agent under the task (§2, §5.3).
 
 ## 4. Agent briefs — what every brief MUST contain
@@ -77,9 +83,10 @@ Write it out; never assume the agent "knows".
   description starts with the task id (`<T> review r2 …`): the agent binding and the journal bind the agent to it (§11).
 - **Goal**, plus the owner's own words when they matter (quoted, with OR-IDs).
 - **Memories to know** (OR-51, MANDATORY in every brief): the output of `python3 -I .boa/tools/memory_search.py --task <T>`
-  (and of a search on the task's components), pasted as is: this is how a sub-agent gets its task's memories (no
-  SubagentStart injection is wired by default). The agent searches again itself at start and on any error, and cites
-  the final ids it used.
+  (and of a search on the task's components), pasted as is: this is how a sub-agent gets its own task's memories (the
+  sub-agent start hook, where the runtime has one, gives only the reminder and every active lane's memories: the
+  agent's task is bound only after it starts, AGENTS.md §14). The agent searches again itself at start and on any
+  error, and cites the final ids it used.
 - **Acceptance criteria** (copied from the plan row; they go into the PR).
 - **What to run:** the named tests and suites the change touches; for the tester the delicate lines to mutate.
 - **Rules (always):** paste `<lead>/brief-common.md` (targeted runs, no synthetic load, never touch other projects
@@ -103,8 +110,8 @@ Templates (fill the `<…>`):
   ONLY these findings: <verbatim list>; per finding say what you changed or why you reject it."
 - **Reviewer (read-only):** "You are the adversarial REVIEWER for <T>, <full | delta <old>..<new>>. Attack:
   <criteria, boundaries, security surface, behaviour vs specs/goldens, KISS/YAGNI/DRY, reinvention>. Prior findings
-  to verify: <list>. Run only what proves or disproves a finding. Report: `[SEV] [BLOCKING|NON-BLOCKING] file:line —
-  what — failure scenario — fix — class reason`, `Delicate paths for Tester: …`, or `REVIEW CLEAN` + what you
+  to verify: <list>. Run only what proves or disproves a finding. Report: `[SEV] [BLOCKING|NON-BLOCKING] [SMALL|LARGE]
+  file:line — what — failure scenario — fix — class reason` (SMALL or LARGE on a non-blocking finding only), `Delicate paths for Tester: …`, or `REVIEW CLEAN` + what you
   tried."
 - **Tester:** "You are the TESTER for <T> at <sha> (review clean). Verify: <criteria>; suites: <list>; static
   analysis on <paths>; mutation (§24) on <changed delicate lines> through the stack's mutation wrapper; thresholds <…>;
@@ -131,6 +138,35 @@ Templates (fill the `<…>`):
    agent of the same role, briefed from `.lane-resume/<role>.md`, the newest journal entry and the lead's notes
    since. The agent to resume is the one the agents registry (§2) lists for the task and role (it records every spawn,
    stop and replacement; never copy ids into `lanes.md`).
+   **Resume or start fresh** (the one place of this rule; OR-16): when you send a bounce, a review finding or a next
+   round back to a lane, or resume a paused round (§13) (the decision is taken ONLY when you hand out a NEW round: a
+   bounce, a finding, a next stage, a resumed round;
+   a working agent is NEVER interrupted, cut short or asked to wrap up because of its context size, its round count or
+   its elapsed time: it finishes its brief (its own stage budget, OR-53, is part of its brief and still applies) and the triggers apply to
+   the NEXT hand-off; the only reasons to stop a
+   working agent are the user's request, a pause, the loop guard (OR-06) at a hand-off, or a clear runaway such as a
+   hang or a resource emergency, each stated as such),
+   - **resume the same agent** while its context is still moderate and the new round follows soon: it already holds
+     the facts and the runtime's prompt cache is likely still warm;
+   - **start a FRESH agent of the same role**, briefed with the lane's `.lane-resume/<role>.md`, its last report and
+     the exact findings, when any trigger holds:
+     - size: the agent's context size (the input of its last turn) is past the LOWER of about half of the model's
+       context window, as the capabilities record states it for that role's model, and the cost bound
+       `BOA_AGENT_FRESH_TOKENS` of the config (the per-turn cost of a large context dominates well before a large
+       window is half full); only a context size is compared with the bound: a run's token total (the usage clock's
+       figure, `result.tokens`) is not a context size and is never compared; with totals only, or nothing, the
+       round count and the wait decide; window unknown: ask the user;
+     - rounds: the round you are about to send would be the third the CURRENT agent serves on the lane (a fresh agent
+       starts at one; a resumed paused round is the same round continuing and does not count); a fresh agent continues the lane's counts (OR-06 attempts, OR-52 rounds, the mutation cap);
+     - wait: the wait since the agent's last turn is past the cache lifetime as wired (OR-36) in the capabilities
+       record;
+   - why: rereading what a round needs costs less than carrying everything, and a fresh context reasons better;
+     compaction is not the lever, it loses detail (the context gate keeps a copy, but the agent works from the
+     summary);
+   - non-delicate one-line, test-data and wording fixes (OR-34) go to the light builder role, resumed or fresh by the
+     same triggers;
+   - before you decide, read the agent's context size where the runtime reports it (the clock's agents registry,
+     project-wiring "usage clock and throughput"); where it does not, count the rounds and the wait.
 4. Docs/memory-only changes skip review (OR-01): builder → tester (completeness against the sources) → integrator.
    A change mixing code and docs is reviewed for its code part.
 5. The reviewer is read-only: the lead (or the next builder round) records each review outcome (findings count →
@@ -143,7 +179,10 @@ Templates (fill the `<…>`):
 9. **Review findings and exit** (OR-52): every finding is BLOCKING or NON-BLOCKING with a reason (the lead may
    re-class). The lane leaves review after a round with no findings, or after two consecutive rounds with no
    blocking finding (the second only if code changed after the first). Before it leaves, each open non-blocking
-   finding is fixed or relocated to a named task. The registry line carries the round and the class counts.
+   finding is fixed in the same round when it is small (inside the lane's own task and needing no decision not yet
+   taken, whatever the edit size) and relocated to a named task only when it is large (a decision not yet taken,
+   another task's or lane's scope, a task not yet landed, or new scope), as OR-52 defines; the fix goes to the builder
+   tier OR-34 picks (when in doubt, `builder`). The registry line carries the round and the class counts.
 10. **One active stage per lane** (OR-59): never brief a builder while the lane's reviewer or tester is running;
    queue follow-ups for the next builder round. A lane in progress takes only fixes.
 
@@ -184,12 +223,19 @@ Templates (fill the `<…>`):
    dependencies (the stack plug-in's install step) before gating.
 5. Open the PRs (body: acceptance criteria, review sign-off, test results, Provenance line in a clean-room project);
    with no forge (`BOA_FORGE=none`) none is opened.
-6. Gate: ONE run on the final stacked tree, before the merge, in the worktree of the stack tip:
+6. Prefix checks, then the gate. The prefix checks run first, on every train, with or without a forge: the light
+   static checks that read the plan, the feature ledger and the generated files (`plan_lanes.py --check`,
+   `trace_check.py`, the project's rendering drift check) run on EVERY prefix of the stack (each lane head in order,
+   the fold commit with the last), not only on its tip: a train can land partly, so each prefix must hold alone.
+   Lanes whose prefix fails only because a later lane completes it name each other: they land together, in one
+   train, never split by a partial landing; any other failing prefix bounces like a red gate.
+   Gate: ONE run on the final stacked tree, before the merge, in the worktree of the stack tip:
    the project's gate in pre-merge mode, reusing the lane receipts (project-wiring "the project gate") — every tree step on exactly the tree that lands, the
    full gate's budgets and suite selection (never the changed-files mode); the mutation step reuses the testers' receipts and
-   re-runs only what the rebase changed. With a remote runner (OR-32) it runs there:
-   through the project's runner command (project-wiring "remote runners"); runner unreachable = STOP the
-   train and report, never a local gate. Steps that check the deployed instance run after the merge, in the main
+   re-runs only what the rebase changed. With the runner on (OR-32) it runs there:
+   through the project's runner command (project-wiring "remote runners"); with the runner on, its command not
+   configured on this machine or not reachable: STOP the train and report, never a local gate; with the runner off,
+   the gate runs locally. Steps that check the deployed instance run after the merge, in the main
    checkout (the gate's deployment steps, when the stack plug-in has such steps). When the train touches the gate
    itself, the gate's self-test runs with the train gate (its tree cases, on the runner when configured; one planted
    defect per step, each caught) and its deployment cases run in the main checkout right after the deployment
@@ -264,8 +310,8 @@ Templates (fill the `<…>`):
   `active-context.md`; then clears the marker once the project's own leftovers are cleaned.
 
 ## 11. Safety layer
-- **Guard hook** `.boa/hooks/guard_destructive.py` (on the runtime's pre-tool event for its shell, file-write,
-  file-edit and file-read tools: the matcher is in the runtime's profile; wired in the runtime's hook settings). It reads each command with a shell lexer
+- **Guard hook** `.boa/hooks/guard_destructive.py` (on the runtime's pre-tool event for its shell, file-write
+  and file-read tools: the matcher is in the runtime's profile, checked per OR-63; wired in the runtime's hook settings). It reads each command with a shell lexer
   (`.boa/hooks/shell_lexer.py`: quotes, substitutions, heredocs, redirections, wrappers such as `sudo`/`env`/`nice`/
   `timeout`/`xargs`) and denies, among others:
   - deletions outside the scratch root, the project's own temp prefix and worktree subpaths; `..` in delete paths;
@@ -273,18 +319,20 @@ Templates (fill the `<…>`):
     `.env*`, `.boa`, the runtime's own configuration named in `BOA_RUNTIME_CONFIG`, the lead dir, logs); `.git`
     anywhere;
   - **sub-agent writes** (redirections, `mv`/`cp`/`tee`/`ln`/`install`/`rsync` destinations, `sed -i`, `dd of=`, the
-    Write/Edit tools) outside their own lane worktree, the scratch root and the project's temp prefix; **everyone's**
+    file-write tools) outside their own lane worktree, the scratch root and the project's temp prefix; **everyone's**
     shell writes to `<main>/.boa/`, `<main>/.env*` and the runtime's configuration (`BOA_RUNTIME_CONFIG`; the lead uses
     its file tools or the override);
   - a sub-agent touching **another lane** (bound by the agent binding, `.boa/hooks/agent_binding.py`, to the first
-    task id of its Agent description; the integrator may act on any lane; an unbound agent stays confined to the
+    task id of its sub-agent spawn's description; the integrator may act on any lane; an unbound agent stays confined to the
     lane worktrees, its destructive commands there noted in the log);
   - `/dev/*` as an `ln`/`mv`/`install`/write target, permission changes or mounts on `/dev`, `dd` to a device;
   - **other projects**: a sub-agent naming any path of another project (reads included), `cd` into one; for
     everyone, git write verbs on another project's repository;
   - the project's **protected commands** (`.boa/protected-commands.conf`, written at bootstrap as a project-wiring
     item: `<all|lanes> <program>[,...] <pattern> <reason>` per line): how the project protects its own resources
-    (databases, containers, services, the deployed instance); the guard itself knows none of them. An invalid file
+    (databases, containers, services, the deployed instance); the guard itself knows none of them. The agent fills
+    the package-manager shapes of `references/safety.md` for every language and package manager the host uses, each
+    with all its invocation forms (versioned name, interpreter module form, other front ends). An invalid file
     refuses every shell command until it is fixed (the BOA package's `references/safety.md`);
   - destructive git (`clean`, `reset --hard`, `checkout` of paths, `stash drop`) outside the lane; force-push or
     deletion of `{{BOA_MAIN_BRANCH}}`; sub-agent pushes to `{{BOA_MAIN_BRANCH}}`;
@@ -318,7 +366,7 @@ Templates (fill the `<…>`):
   §13; everything else is denied.
 - **Permission log** (project-wiring "permission log"): every permission prompt is logged (redacted), to find what still
   prompts.
-- **Cleanup allowlist** (the runtime's permission settings): literal `rm` shapes under the scratch root
+- **Cleanup allowlist** (the runtime's permission settings, their format checked per OR-63): literal `rm` shapes under the scratch root
   and the worktrees dir, `git worktree remove/prune`, lane branch deletion (local and remote), removal of
   `{{BOA_NAME_PREFIX}}*` containers/networks/volumes; deny rules for `rm` with `..` and `rm -rf`
   of `/`, `/tmp` and the projects dir. Agents use exactly these shapes and never stall on a prompt (OR-11).
@@ -346,7 +394,8 @@ Pause (the owner asks to stop, e.g. a usage limit is ending):
    from its next tool call a sub-agent may only: write its own `.lane-resume/<role>.md`; append (only) to its lane's
    `.lane-resume/memories.md`; run read-only git;
    `git add` / `git commit` in its own worktree; `rm` its own scratch subdir; `kill` its own PIDs (the cleanup needs
-   the task: the agent binding, else the lane worktree's name). Everything else is denied
+   the task: the agent binding, else the lane worktree's name); hand back its final report (the report tool call,
+   neutral kind `report`, where the runtime delivers it so). Everything else is denied
    with the
    instruction to do exactly these and end its turn. The lead also messages every running agent "finish the atomic
    step, then stop" (an agent inside a long tool call sees the flag at its next call). **Integrator:** it stops BEFORE
@@ -362,29 +411,41 @@ Pause (the owner asks to stop, e.g. a usage limit is ending):
    questions, commands to verify. Enough for a fresh agent with no memory. Then it cleans its scratch, leaves no
    processes, names in the resume file any other resource its lane started (containers, services: the lead removes
    them with the project's own commands) and ends its turn.
-3. The SubagentStop hook (`.boa/hooks/subagent_stop.py`) copies each resume file to `<lead>/lanes/<T>-<role>.md`
+3. The sub-agent stop hook (`.boa/hooks/subagent_stop.py`) copies each resume file to `<lead>/lanes/<T>-<role>.md`
    and journals the stop as "paused" (it warns when no resume file exists: expected for a read-only role, whose
-   resume file and lead-dir copy the lead writes from its final message, step 2). The lead's Stop hook
-   (`.boa/hooks/lead_stop.py`) renders `<lead>/RESUME-LEAD.md` from the status screen; the lead stops the project's
+   resume file and lead-dir copy the lead writes from its final message, step 2). The lead's stop hook
+   (`.boa/hooks/lead_stop.py`) renders the status screen as the marked block of `<lead>/RESUME-LEAD.md` (every byte
+   outside the block kept); the lead stops the project's
    daemons; `RESUME-LEAD.md` lists every lane "merged, fold pending" (its worktree kept for the next train's fold). The
    lead appends the pause to `<lead>/lanes.md` and pushes the lane branches as a backup (no PRs).
 Resume:
+In another runtime, first: when the runtime you resume in is not one the capabilities record names, or its wiring is
+absent, redo the capability self-assessment for this runtime (its latest official documentation and the installed
+version) and wire it before you clear the flag or resume any lane. Do only what this runtime needs; leave the other
+runtime's wiring untouched (never modify, move, regenerate or remove it unless the user explicitly asks; report what
+looks stale), the two coexist. Add this runtime to the capabilities record and tell the user what it cannot enforce.
+When the runtime that last worked on the project is not this one, set `BOA_SCRATCH_ROOT` and `BOA_SCRATCH_GLOB` again.
+Until the wiring exists no hook reminds you: `AGENTS.md`'s read order is the only path to this step (a declared limit).
 4. `.boa/bin/pause-flag.sh clear`, then §1; restart the project's daemons; `lead-status.sh` lists `RESUME-LEAD.md` and every
    `.lane-resume/<role>.md`.
-5. If the session survived, message the SAME agents (OR-16) "resume from your resume file"; otherwise start NEW
-   agents, each given its resume-file path plus the lead's notes since the stop. Resume files are removed with the
+5. If the session survived, apply §5.3 at the resume: a resumed paused round is the SAME round continuing, so it never
+   counts toward the third-round trigger; the size trigger (the agent's context size past the LOWER of about half of
+   the model's context window and `BOA_AGENT_FRESH_TOKENS`) and the wait trigger (the pause outlasted the cache
+   lifetime) apply: a fresh agent when either holds, else the SAME agent (OR-16, message "resume from your resume
+   file"); otherwise start NEW agents, each given its resume-file path plus the lead's notes since the stop. Resume files are removed with the
    worktree by the integrator (never committed).
 
 ## 14. Close-out
 - **Milestone closure:** the full-scope mutation round on the delicate paths (the stack's mutation wrapper in its
   milestone mode, on the runner when configured), every suite tier, the residue check in closing mode, the secret
   scan of the tree (project-wiring "secret scanning"), freshness (§19), the duration review (§15), every row of the
-  milestone DONE, the optional reviews the adopted rules ask for (UI, translations), then the tag.
+  milestone DONE, the docs sweep (OR-74: a task that checks every user chapter against what landed; the release notes
+  follow OR-73), the optional reviews the adopted rules ask for (UI, translations), then the tag.
 - **Project end** (`/close-project`), in this order: (1) the close-out questionnaire (how the project ends: deploy
   target, leave in place, remote repository and visibility, CI, licence, hand-over, keep or uninstall BOA), recorded
   as an ADR; (2) the closing steps the owner chose, through the pipeline (uninstall excluded); (3) THEN the final
   checks: the secret scan of the tree **and the full history** (project-wiring "secret scanning"),
-  every feature traced (`trace_check.py`), release acceptance, freshness, the final duration review, the
+  every feature traced (`trace_check.py`), the docs sweep (OR-74), release acceptance, freshness, the final duration review, the
   whole plan DONE, the transit queue open-items.md empty and the pending folds at zero (OR-25), the correspondence check
   `python3 -I .boa/tools/trace_check.py --close` at **0 mismatches** (§26), the project's daemons stopped,
   the residue check in final mode = zero (the register empty), the final requirements review at zero open
@@ -410,7 +471,8 @@ Every agent must know this:
    and timeout, the worker count and the load, appended by the project's gate to the timing
    ledger (project-wiring "suite timings and duration control") with the commit it ran on. The agent clock (§22) measures the agents' own time.
 2. **Budgets:** the project's budgets file: a default per-suite budget (overrides each with a written
-   reason), a budget per gate step, the gate total ({{BOA_GATE_BUDGET_S}} s), the trend window and regression
+   reason; the duration target for OVER-BUDGET reporting, never a kill timeout), the run timeout cap
+   (`run_timeout_cap_s`, §15 item 10), a budget per gate step, the gate total ({{BOA_GATE_BUDGET_S}} s), the trend window and regression
    threshold, the dominance threshold ({{BOA_DOMINANCE_PCT}} %), and the load limits that mark a run SUSPECT.
 3. **When:** the project's timing check runs at the end of every gate (its `SUMMARY:` line closes the gate
    output), at every merge train (the integrator reports its table, even after a failed gate), at milestone closure
@@ -433,6 +495,24 @@ Every agent must know this:
    remedies: more or fewer lanes, a remote runner or a bigger one, worker counts, tiering. Proposals that cost money
    go to the owner as a HITL with options.
 9. **Speed never trades away coverage**: a speed-up that drops a check, a case or a planted fault is rejected.
+10. **Bounded runs:** every test run and every planted-fault run runs under a timeout derived from that run's own
+   recorded duration, never a fixed number: from the suite or case timings the project keeps (the gate's timing record,
+   or the stack runner's), for example about three times the median of its recent runs, and never above the cap
+   `run_timeout_cap_s` of the project's budgets file; a run with no history uses the cap itself. The suite budget
+   (`default_suite_budget_s`) is the duration target for OVER-BUDGET reporting and is never used as a kill timeout. A
+   planted-fault run uses the duration of the covering cases' clean baseline run (the run before the plant). A timeout
+   is a failure, and for a planted fault that times out while a covering case is running it counts as killed by
+   timeout, recorded as such, provided the clean baseline run finished inside the bound and the timeout is confirmed
+   by a replay alone, unless the first run already ran alone (no other run active at any time during it): a replay of
+   the plant alone, under the same timeout, times out too, while a replay that ends gives its own verdict; a timeout
+   outside every covering case is confirmed the same way and is invalid, like a failure there; when the cap clipped
+   the bound (the timeout derived from the clean baseline run is above the cap), a confirmed timeout is skipped, never
+   killed or invalid: raise the cap; a plant whose clean baseline run is already over the bound is skipped (not run):
+   raise the bound within the cap or narrow the cases, as for a mutant. A test that waits on a lock, a queue or the
+   network sets its own short bound, never the product's long default. A hanging run is never repeated in the hope
+   that it passes (OR-06): the cause is investigated. The replay alone of a timed-out plant is not such a retry: it
+   confirms a kill, and a replay that ends points at contention (a shared lock, the host's load) as the cause to
+   investigate.
 
 ## 16. Keeping the repository current between merges (OR-21, OR-25, OR-26, OR-35)
 1. A new owner rule said in chat goes **immediately** into `<lead>/owner-rules-pending.md` as one memory block
@@ -481,7 +561,7 @@ Every agent must know this:
    --format-only`, which may carry `supersedes="memory-N"` (an existing final id) or `supersedes-brief="<brief>"`
    (another new block of the same lane or batch); the fold's `memory_write.py --ingest` resolves them and stamps
    both directions atomically. The id ledger `memory-bank/.memory-ids.jsonl`, written only by the tool, makes a
-   hand-written id fail the lint, the PostToolUse hook and the pre-commit.
+   hand-written id fail the lint, the post-tool hook and the pre-commit.
    Supersession chains are always coherent: a memory is superseded at most ONCE (a single `superseded-by`); to
    replace a memory that is already superseded, supersede the CURRENT head of its chain (`memory_search.py --chain
    <id>` shows it); one memory may supersede several current memories (a merge); two memories superseding the same
@@ -493,8 +573,8 @@ Every agent must know this:
    a lower id).
    Nobody hand-edits ids or links; `Memories used:` cites final ids only (a lane's own new memories by their brief
    until the fold). Decision records are `ADR-NNN` (type `adr`) and `EDR-NNN` (type `edr`) in 06; a defect is a `bug`
-   memory plus a task. The `pre-commit` hook runs `memory_lint.py --staged` and refuses broken links; the PostToolUse
-   hook `.boa/hooks/memory_check.py` lints a memory file after every Write or Edit; the SessionStart status carries a
+   memory plus a task. The `pre-commit` hook runs `memory_lint.py --staged` and refuses broken links; the post-tool
+   hook `.boa/hooks/memory_check.py` lints a memory file after every file write; the session-start status carries a
    three-line memory-writing reminder and the current memories for each active task id. A file with notes from before
    BOA keeps them above a `<!-- boa:memory-cutoff -->` line (legacy, exempt). Types, routes and recall moments: one
    file, `.boa/memory-types.json` (`.boa/tools/memory_types.py --check` validates it, `--render-tables` regenerates
@@ -514,6 +594,8 @@ Every agent must know this:
 7. The handbook (OR-26): every tool, path or procedure change updates `docs/agent-handbook.md` in the same commit;
    `python3 -I .boa/tools/handbook_drift.py` fails on drift. The lead reviews the handbook as a whole at each
    milestone closure.
+8. User documentation (OR-74): a change that alters what a user of the project sees updates the project's user
+   documentation (the files the handbook's file map names) in the same change; the reviewer flags the missing update.
 
 ## 17. Lane hygiene
 - Own scratch subdir only (`<scratch>/<T>-<role>/`); create it first and check it
@@ -544,11 +626,18 @@ Every agent must know this:
   `; DONE — PR #NN` **appended**, never rewritten.
 
 ## 18. Remote test runner and heavy runs (OR-32; `BOA_RUNNER={{BOA_RUNNER}}`)
+- Wiring a runner always starts with three questions to the user, answered into the capabilities record, one entry per
+  runner (how many runners, each dedicated or shared; with which projects and whose admission; how much of each this
+  project may use): project-wiring "remote runners".
 - With a runner: every heavy run (gate test steps, mutation, whole suites, container and database suites) runs as
   the project's runner command (project-wiring "remote runners"): it syncs exactly what git would commit (never ignored files, secrets or
-  `.lane-resume/`), runs through the runner's allowlist, streams the output, returns the exit status and copies
-  back receipts, logs and one timing record. "Not configured" or "unreachable" (their own exit statuses, recorded
-  in the handbook): STOP and report to the lead; never a local fallback. The runners' status is read at every train.
+  `.lane-resume/`; the stack plug-in `.boa/stack/` is versioned, BOA's tools are not and never go there: the gate's
+  BOA checks are light static steps run locally from the main checkout's `.boa/tools/`), runs through the runner's allowlist, streams the output, returns the exit status and copies
+  back receipts, logs and one timing record. With the runner on, its command "not configured" on this machine or
+  "unreachable" (their own exit statuses, recorded in the handbook): STOP and report to the lead; never a local
+  fallback. With the runner off, the gate and the heavy runs run locally. The runners' status is read at every train,
+  each runner on its own; with several, the runner command picks the one with the most free capacity and skips a
+  runner that is down, reporting it.
 - The local guard hooks do not see inside the runner session: there the runner's allowlist is the guard.
   Agents never edit the runner config, never change its provisioning outside its planned task, never open a session
   to it by hand; its address and key
@@ -584,7 +673,8 @@ size estimates, the train cadence and the throughput review (§15).
 
 ## 23. Mode bootstrap and new work (run-project, first run)
 - **Self-wire first (every mode):** BOA's agent and command files are runtime-neutral (a neutral header over a
-  neutral body). Before the mode's work, the lead has them in its runtime's own format: (a) the agents as sub-agents,
+  neutral body). Before the mode's work, the lead has them in its runtime's own format, each format checked in the runtime's
+  latest official documentation and the installed version, never from memory (OR-63): (a) the agents as sub-agents,
   (b) the commands as the runtime's commands or prompts, (c) the hooks registered in the runtime's configuration, its
   events mapped to BOA's neutral ones, **report capture included**: the sub-agent-stop hook saves each agent's final
   report verbatim to the lane journal, plus the lead-stop and session-status hooks; (d) where the runtime lacks one
@@ -596,7 +686,12 @@ size estimates, the train cadence and the throughput review (§15).
   milestones in AGENTS.md §2 → the plan with lanes (03) → stack choice ADR when not given (latest stable, verified).
 - **Brownfield:** analyzer fan-out (as many as the code base needs, one area each, read line by line) → 04
   architecture, 01 blueprint (`exists`), contracts reconstructed (02, `docs/api/`), 07 known issues → the owner
-  confirms goals → plan.
+  confirms goals → plan. A plan the project already keeps under its own column names is not renamed: the agent adds
+  those names as `aliases` of the plan columns in `.boa/markers.json`, safely: it edits a copy, checks it with
+  `BOA_MARKERS` naming the copy (`BOA_MARKERS=<copy> .boa/bin/boa language check` in a POSIX shell; in the Windows
+  command prompt `set "BOA_MARKERS=<copy>" && .boa\bin\boa.cmd language check`, then `set BOA_MARKERS=` to clear
+  it; the same variable lets `.boa/tools/trace_check.py` preview the effect), then moves the copy into place and runs
+  `.boa/tools/trace_check.py`, so its mismatches are real gaps, not naming.
 - **Refactor:** as brownfield, then characterise current behaviour (tests or goldens) before any change, then the
   refactor plan from `IDEA.md`; the clean-room rule when the IP situation needs it.
 - **Spec-side tasks precede build tasks** (OR-48): the plan carries, for every contract, the task that writes it
@@ -688,12 +783,17 @@ size estimates, the train cadence and the throughput review (§15).
    found and a non-obvious problem solved → write the memory.
 3. **Cite:** every report carries `Memories used: <ids>` (or `none found`); the lead's briefs name the memories a
    lane must know (§4); the reviewer flags a report that ignored a memory it should have followed.
-4. **Wired support** (where the runtime has the events; verified at install): the PostToolUseFailure hook
+4. **Wired support** (where the runtime has the events; verified at every wiring, OR-63): the post-tool-failure hook
    `.boa/hooks/memory_recall.py` searches the memory for a failed tool call's error text and injects the matching
-   gotcha/trap/lesson ids; the session-start status prints the current memories for every active task id; a sub-agent
-   gets its task's memories through its brief (§4, mandatory); a SubagentStart injection is not shipped (a runtime
-   that injects SubagentStart context may get one the agent writes: `.boa/hooks/agent_binding.py --task-of <agent
-   id>`, then `memory_search.py --task <T>`).
+   gotcha/trap/lesson ids; the session-start status prints the current memories for every active task id; at a
+   sub-agent's start, where the runtime injects context there, `.boa/hooks/memory_recall.py --session` gives the
+   starting agent the memory reminder and every active lane's current memories (the agent→task binding lands only
+   after the agent starts, so no hook can pick its own task then); a sub-agent gets its own task's memories through
+   its brief (§4, mandatory). Discipline only: no runtime event marks a decision, planning or the
+   close-out, and no shipped hook acts on a contract file's write (the post-write hook only lints the memory files); at
+   those moments the agent searches itself (AGENTS.md §14). A BOA update has its own procedure (§30, docs/02
+   "Re-installing and upgrading"). The review moment is served in part by the sub-agent start hook, and for the rest by
+   the brief's "memories to know" (§4).
 5. **The lead's own recall:** before planning or splitting lanes (outcome, heuristic, lesson), before a ruling (adr,
    edr, constraint, nogoal), and at close-out (deferred, goal, requirement, constraint — they must be closed or
    superseded).
@@ -721,7 +821,7 @@ size estimates, the train cadence and the throughput review (§15).
 - **Real inputs:** code that consumes files another part produces has a case on the real files of current main,
   run every round.
 - **Plants:** only the covering cases, each plant in its own scratch copy, independent plants in parallel up to the
-  lane cap; a green unplanted baseline first; whole suite once at the start and once at the end.
+  lane cap; a green clean baseline run first; whole suite once at the start and once at the end.
 - **Budgets:** at the budget, stop and report the current state; the lead accepts, bounces or extends once.
 
 ## 30. Project wiring and measuring (OR-64, OR-07)
@@ -739,7 +839,7 @@ size estimates, the train cadence and the throughput review (§15).
 |---|---|---|---|---|
 | Config and environment facts | `.boa/config.env` written from the shipped template, every value valid; the facts the plan needs (OS, CPU, memory, disk, tools and versions, rights, lane cap) probed, never assumed | bootstrap; after a host or runtime change | lead | the install self-test; the capabilities record |
 | Gate | one command runs every check, in order, on exactly the tree that lands; tiers for lanes; non-removable alignment steps (plan lanes check `plan_lanes.py --check`, correspondence, contract tests, requirements, memory lint, handbook drift, lane residue, mutation-scope coverage); each suite's case filter proven to select only what it names | every train (pre-merge, stack tip); lanes run targeted parts | integrator; tester for touched steps | a gate self-test that plants one defect per step, each caught, whenever the gate changes |
-| Heavy-run refusal and runners | with a runner configured, heavy runs never run locally; runner down = stop, never a local fallback; every suite classed light or heavy with a reason, reclassified from durations every train; runner status, thresholds and cleanup of finished runs read every train | every heavy run; every train | all; lead reviews | a role-blind refusal hook tested on payloads; the train report |
+| Heavy-run refusal and runners | with a runner configured, heavy runs never run locally; with several runners a down one is skipped and reported; with the runner on, no runner reachable or its command not configured = stop, never a local fallback (§18); every suite classed light or heavy with a reason, reclassified from durations every train; runner status, thresholds and cleanup of finished runs read every train | every heavy run; every train | all; lead reviews | a role-blind refusal hook tested on payloads; the train report |
 | Mutation wrapper | the mutation library runs only through the wrapper: changed lines, covering tests, caps, receipts, 0 skipped | every tester run; train reuse | tester, integrator | a refusal of the bare tool; receipts |
 | Git hooks | nobody pushes to main (local refusal + server-side protection with consent); conventional commit messages; staged secrets and broken memory links refused | every push and commit, every worktree (shared hooks dir; reinstalled when a train changes them) | all | the hooks' own tests; the integrator |
 | Secret scanning | an adopted, maintained scanner: staged diff, whole tree, full history | every commit; milestone closure (tree); close-out (tree + history) | all; lead at closure | the pre-commit hook; the close-out report |
@@ -749,6 +849,7 @@ size estimates, the train cadence and the throughput review (§15).
 | Suite timings and budgets | every gate run's total, step and suite times recorded; budgets, trend, critical path and dominance reported | every gate; every train; milestone closure | integrator reports; lead opens speed-up tasks | the train report (§15) |
 | Throughput and cost | lane wall time, queue and gate time, tokens per agent run where the runtime exposes them; proposals (lanes, runner size) | every train; when work feels slow | lead | the train report; HITL for money |
 | Permission log | every permission prompt logged, redacted | always | lead reviews every train with the guard denials | the registry note (§11) |
+| BOA release check | the installed BOA version (the capabilities record) compared with the newest release of the channel it came from; a newer one becomes a plan row `chore: update BOA to vX.Y.Z`, run outside a train by the update procedure (the BOA package's `docs/02-install-and-wiring.md` "Re-installing and upgrading"); never an update in the middle of a train; no network: said, checked at the next closure | milestone closure; close-out; when the user asks | lead | the capabilities record; the plan row |
 
 ## 31. Languages (OR-65)
 - At bootstrap the lead detects the user language (or asks it) and records the product language (default English)
@@ -760,7 +861,8 @@ size estimates, the train cadence and the throughput review (§15).
   translation, self-checks every hook on samples written in the new language (the report capture with its Leftovers
   section, the review classes, the fold marker, the plan columns), keeps English as an alias and regenerates the
   marker-bearing sections of the installed files (then copy `.boa/agents` and `.boa/commands` into the runtime
-  again); reports stay English until the self-check passes; then the product follows the new language. The memory
+  again, its format checked again per OR-63; the plan columns' `aliases` stay as they are, never translated); reports
+  stay English until the self-check passes; then the product follows the new language. The memory
   syntax is never a marker and never translated.
 <!-- boa:markers:begin keys=section.leftovers,leftovers.none,review.blocking,review.non_blocking,fold,plan.contract_column -->
   Machine-recognised words (`.boa/markers.json`, product language `en`; the English texts are always accepted too): section.leftovers = `Leftovers`; leftovers.none = `none`; review.blocking = `BLOCKING`; review.non_blocking = `NON-BLOCKING`; fold = `Folded by`; plan.contract_column = `Contract / spec`.

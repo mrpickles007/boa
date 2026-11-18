@@ -40,7 +40,16 @@ changed: remove its leftovers by hand. Exit codes: 0 done (some files may be kep
 
 - `.boa/config.env`, which the agent wrote for the project: kept and reported; delete it by hand to remove every
   trace (and `.boa/protected-commands.conf` and `.boa/memory-types.json` if the agent wrote them).
+- The stack plug-in files and the `.boa/markers.json` the project adapted (versioned): kept and reported; those
+  still as BOA installed them are removed. With `BOA_AGENTS_BLOCK=pointer`, `docs/boa-rules.md` goes like any installed
+  file (kept when changed) and AGENTS.md's pointer block like the full block.
 - Files you changed since the install (unless `--force`) and files behind a symlink.
+- `docs/boa-notice.md`, the attribution of BOA's texts and MIT files, while any of them stays (a file, AGENTS.md's
+  block or the project's own `memory-bank/04-ARCHITECTURE.md` block kept above, an adapted stack plug-in file,
+  `.boa/markers.json` or `.boa/memory-types.json`): kept, and the report names what it covers; it goes with the last
+  of them. The uninstall cannot see the copies the agent made outside the manifest: keep `docs/boa-notice.md` by hand if you keep the runtime copies of BOA's agent and command
+  definitions, the context-gate copies (`.context-gate/` and the skill's copy) or files into which you merged BOA's
+  renderings (the conflicts the install parked in `.boa/pending/`).
 - Everything outside the manifest: your code, the project's own wiring (below), the lead directory's content the lead
   wrote after the install.
 - What BOA's tools wrote after the install: the memory id ledger (once a memory was written; while it is still as
@@ -54,6 +63,13 @@ Known limits:
   removes nor names it, nor the directories that hold it.
 - `--force` removes the id ledger even when kept memories still carry its ids; a later install seeds a new ledger
   from them.
+- `AGENTS.md`'s block is kept when it changed since BOA wrote it (or BOA has no record of writing it), and so is the
+  residue register BOA added to your own `memory-bank/04-ARCHITECTURE.md` when it holds rows or its text changed:
+  delete them by hand. The uninstall removes the manifest, so a later `--force` run finds nothing to act on: to
+  have the uninstall remove such files, run it with `--dry-run` first and decide on `--force` before the real run.
+  A line you wrote inside one of BOA's other marked blocks goes with the block: move it outside the block first
+  (the same holds for an update, [02 Install and wiring](02-install-and-wiring.md#re-installing-and-upgrading)).
+- The copies in `.boa/pending/` are installed files: an unchanged one is removed, so merge it into your file first.
 
 ## The project's own wiring
 

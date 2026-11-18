@@ -29,7 +29,10 @@
   forge CLI and authentication, the lane cap computed from it ({{BOA_LANE_CAP}}).
 - In use: <versions, paths, ports, services; what was reused vs installed; containers vs native>.
 - Shared machine: <other projects/services present (names only, never their data); ports to avoid>.
-- Agent runtime: <runtime and version; hooks it runs; what it cannot do and how the rule is applied instead>.
+- Agent runtimes (one line per runtime that has worked on the project; a runtime that joins later, e.g. to resume a
+  pause, adds its own line and leaves the others): <runtime and version; where its wiring lives; each role's model
+  with its context window (source, date; unknown: asked, 09 §5.3); cache lifetime as wired; agent context-size
+  source; hooks it runs; what it cannot do and how the rule is applied instead>.
 - Remote test runner: `BOA_RUNNER={{BOA_RUNNER}}` (its address lives only in the runner config, never here).
 - Deployment (the project's own instance): <where, how it is isolated, operated by the lead only>.
 

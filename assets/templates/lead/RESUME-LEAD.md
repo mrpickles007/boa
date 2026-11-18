@@ -1,7 +1,10 @@
+<!-- boa:lead-stop:begin -->
 # RESUME-LEAD — PAUSED since <UTC time> (reason: <reason>)
+<!-- boa:lead-stop:end -->
 
-> Written at a pause by the Stop hook (`.boa/hooks/lead_stop.py`) from the status screen and completed by the lead;
-> removed (or marked "RUNNING again since …") at resume. Machine-local.
+> Written at a pause by the lead's stop hook (`.boa/hooks/lead_stop.py`) from the status screen and completed by the lead;
+> removed (or marked "RUNNING again since …") at resume. Machine-local. The hook writes only between the
+> `boa:lead-stop` marker lines above; everything else in this file is the lead's and is kept byte for byte.
 
 ## Read order for a fresh lead session
 AGENTS.md (its Modus operandi first) → docs/agent-handbook.md → the runtime's instruction file, if any → memory-bank/RESUME.md → 08 + 09 → every memory-bank file → THIS file

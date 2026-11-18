@@ -43,7 +43,14 @@
       With `--receipt PATH` (outside the memory bank; there is no default) it also writes an ingest receipt (also when
       every draft was skipped): per file read, `staging` (true for a lead staging file), `lines` = N, the 1-based
       number of the last draft line it read, and `sha256` = the hash of the WHOLE prefix, lines 1..N (each line's text
-      without its line ending, `\n`-terminated): a later edit anywhere in that prefix is detected.
+      without its line ending, `\n`-terminated): a later edit anywhere in that prefix is detected. A receipt path
+      that exists and is not a regular file (a device, a FIFO, a socket, a directory; a symbolic link judged by its
+      target) is refused before anything is read or written: the receipt is renamed into place, which would replace
+      it with a regular file; so is a receipt that is one of the files to ingest or whose directory does not exist,
+      and a path that cannot be checked (a parent that is a file, a symbolic link loop). An input file of --ingest,
+      or the receipt of --mark, that exists and is not a regular file (a device, a FIFO, a socket, a directory) or
+      cannot be checked is refused before it is read: nothing waits or reads forever. So is every file of the
+      memory bank a write reads (the memory files, the id ledger, the --file target).
   python3 -I .boa/tools/memory_write.py --mark RECEIPT --train TRAIN-NNN
       After the fold has landed: inserts `# [<UTC now>] Folded by TRAIN-NNN: everything above. Pending below.` right
       AFTER line N (the receipt's last line read) in each STAGING file, under that file's lock, with the file's own
@@ -55,7 +62,9 @@
       (an editor's save is not under the lock; tools that append, like metalearning.py, take it).
   python3 -I .boa/tools/memory_write.py --seed
       Adopts the ids of an existing memory bank (blocks after the cutoff) into a new ledger; refused when ids
-      collide or the ledger exists. Every write seeds a missing ledger first, so the sequence starts right.
+      collide, the ledger exists, or no valid id is found (no ledger written; the message names the blocks it
+      could not read: lint findings, a header before the cutoff or in a fenced code block). Every write seeds a
+      missing ledger first, so the sequence starts right.
   python3 -I .boa/tools/memory_write.py --repair-ledger [--adopt memory-N[,memory-M] --reason "…"]
       Recovery after an interrupted write (see "Crash safety"): voids every ledger id whose block is missing (`void`:
       the id stays reserved, never reused), stamps a superseded memory whose stamp the interruption left out (only
@@ -92,6 +101,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import heapq
 import json
 import os
 import re
@@ -109,6 +119,42 @@ import memory_types  # noqa: E402
 
 class Refused(Exception):
     pass
+
+
+def replaceable(path: str) -> None:
+    """Refused when `path` exists and is not a regular file: every write here renames a temp file onto its target,
+    which would replace a device, a FIFO, a socket or a directory with a regular file (boa_tool.check_replaceable).
+    A path that cannot be checked (a parent that is a file, a symbolic link loop, no permission) is refused too."""
+    import boa_tool
+    try:
+        boa_tool.check_replaceable(path)
+    except boa_tool.NotRegularFile as exc:
+        raise Refused(str(exc)) from exc
+    except OSError as exc:
+        raise Refused(f"{path}: cannot be checked ({exc.strerror or exc}): not written") from exc
+
+
+def readable(path: str, what: str) -> None:
+    """Refused when the input `path` exists and is not a regular file: checked before any read, so a FIFO or an endless
+    device never makes the tool wait or read forever (a missing file is left to the read's own message; a path that
+    cannot be checked — a parent that is a file, a symbolic link loop, no permission — is refused)."""
+    import boa_tool
+    try:
+        kind = boa_tool.special_kind(path)
+    except OSError as exc:
+        raise Refused(f"{what} {path}: cannot be checked ({exc.strerror or exc}): not read") from exc
+    if kind is not None:
+        raise Refused(f"{what} {path} is {kind}, not a regular file: not read")
+
+
+def same_file(a: str, b: str) -> bool:
+    """`a` and `b` are one file: by device and inode when both exist (a hard link included), else by real path."""
+    if os.path.exists(a) and os.path.exists(b):
+        try:
+            return os.path.samefile(a, b)
+        except OSError:
+            return False
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
 def clean(v: str) -> str:
@@ -153,9 +199,11 @@ class Bank:
     def load(self, extra: list[str] = ()) -> None:
         files = ml.files_of([self.dir]) if os.path.isdir(self.dir) else []
         for f in list(files) + [x for x in extra if x not in files and os.path.exists(x)]:
+            readable(f, "the memory file")   # one stat before the open: a FIFO never hangs the write
             with open(f, encoding="utf-8") as fh:
                 self.texts[f] = fh.read()
-            self.blocks += ml.parse_blocks(f, self.texts[f], self.types.names)[0]
+            self.blocks += ml.parse_blocks(f, self.texts[f], check=False)[0]
+        readable(self.ledger, "the id ledger")
         self.entries, errs = ml.read_ledger(self.ledger)
         if errs:
             raise Refused("; ".join(errs))
@@ -167,7 +215,7 @@ class Bank:
             return 0
         seen: dict[int, ml.Block] = {}
         for b in self.blocks:
-            if b.id is None:
+            if not b.id:   # no id, or memory-0 (ids start at memory-1: the lint refuses it)
                 continue
             if b.id in seen:
                 raise Refused(f"cannot seed the ledger: memory-{b.id} is used twice ({seen[b.id].path}:{seen[b.id].line} "
@@ -181,7 +229,9 @@ class Bank:
         return len(seen)
 
     def next_id(self) -> int:
-        return max([0] + list(self.entries) + [b.id for b in self.blocks if b.id]) + 1
+        """Above every id of the ledger and the bank, the legacy ids before a cutoff marker included (never reused)."""
+        legacy = [i for text in self.texts.values() for i in ml.legacy_ids(text)]
+        return max([0] + list(self.entries) + [b.id for b in self.blocks if b.id] + legacy) + 1
 
     def by_id(self) -> dict[int, ml.Block]:
         return {b.id: b for b in self.blocks if b.id}
@@ -202,9 +252,12 @@ class Bank:
             return path
         return os.path.join(self.dir, self.types.route(typ, keywords))
 
-    def insert(self, path: str, block: str) -> None:
-        """Append the block at the end of the file's `## Memories` section (after the legacy cutoff, created when
-        missing), and never before a block already in the file (ids stay progressive in each file)."""
+    def insert(self, path: str, blocks: list[str]) -> None:
+        """Append the blocks, in their order, at the end of the file's `## Memories` section (after the legacy cutoff,
+        created when missing), and never before a block already in the file (ids stay progressive in each file).
+        Several blocks for one file go in one pass — the place is found once, with one parse of the file, not one per
+        block (a bulk ingest stays linear) — giving the same bytes as one block at a time, which it falls back to
+        where the two could differ: the place inside a fenced code block, or a block holding the cutoff line."""
         text = self.texts.get(path)
         if text is None:
             text = f"# {os.path.splitext(os.path.basename(path))[0]}\n\n## Memories\n"
@@ -217,23 +270,35 @@ class Bank:
             lines += ["\n", "## Memories\n"]
             start = len(lines) - 1
         end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-        last = max((b.end for b in ml.parse_blocks(path, "".join(lines), self.types.names)[0]), default=0)
+        last = max((b.end for b in ml.parse_blocks(path, "".join(lines), check=False)[0]), default=0)
         if last > end:
             end = last
         while end > start + 1 and not lines[end - 1].strip():
             end -= 1
-        lines[end:end] = ["\n", block]
+        # one block at a time, the next one lands right after the previous one: unless the place is inside a fenced
+        # code block (the parse would not see the block just added) or a block moves the cutoff (and the section)
+        fenced = sum(1 for x in lines[cut + 1:end] if x.lstrip().startswith("```")) % 2 == 1
+        if len(blocks) > 1 and (fenced or any(x.strip() == ml.CUTOFF for b in blocks[:-1] for x in b.splitlines())):
+            for b in blocks:
+                self.insert(path, [b])
+            return
+        lines[end:end] = [x for b in blocks for x in ("\n", b)]
         self.texts[path] = "".join(lines)
         self.new_files.add(path)
 
-    def stamp(self, target: ml.Block, succ: int) -> None:
-        text = self.texts[target.path]
-        lines = text.splitlines(keepends=True)
-        i = target.line - 1
-        nl = "\n" if lines[i].endswith("\n") else ""
-        lines[i] = lines[i].rstrip("\n") + f' superseded-by="memory-{succ}"' + nl
-        self.texts[target.path] = "".join(lines)
-        target.fields["superseded-by"] = f"memory-{succ}"
+    def stamp(self, pairs: list[tuple[ml.Block, int]]) -> None:
+        """Stamp `superseded-by="memory-<succ>"` on each (target, succ), one rewrite per file."""
+        by_path: dict[str, list[tuple[ml.Block, int]]] = {}
+        for target, succ in pairs:
+            by_path.setdefault(target.path, []).append((target, succ))
+        for path, todo in by_path.items():
+            lines = self.texts[path].splitlines(keepends=True)
+            for target, succ in todo:
+                i = target.line - 1
+                nl = "\n" if lines[i].endswith("\n") else ""
+                lines[i] = lines[i].rstrip("\n") + f' superseded-by="memory-{succ}"' + nl
+                target.fields["superseded-by"] = f"memory-{succ}"
+            self.texts[path] = "".join(lines)
 
     def commit(self, touched: set[str], ledger_text: str | None = None) -> None:
         """Lint the result, write every file to a temp file, then rename the LEDGER first and the bank files after it
@@ -243,6 +308,8 @@ class Bank:
         findings = ml.check_links(self.reparse(touched))
         if findings:
             raise Refused("the result would not lint: " + "; ".join(findings[:5]))
+        for path in ([self.ledger] if self.new_ledger or ledger_text is not None else []) + sorted(touched):
+            replaceable(path)   # before any temp file: a refusal writes nothing
         tmp: list[tuple[str, str]] = []
         try:
             if self.new_ledger or ledger_text is not None:
@@ -278,8 +345,42 @@ class Bank:
     def reparse(self, touched: set[str]) -> list[ml.Block]:
         blocks: list[ml.Block] = []
         for path, text in self.texts.items():
-            blocks += ml.parse_blocks(path, text, self.types.names)[0]
+            blocks += ml.parse_blocks(path, text, check=False)[0]
         return blocks
+
+
+def nothing_to_seed(bank: Bank) -> str:
+    """Why --seed found no id to adopt, naming the blocks it did not read: to fix — the lint's findings, and every
+    `@@@memory` line in a fenced code block or with a malformed header — and the legacy ones, before the cutoff
+    marker, which are never adopted (by design: the cutoff exempts them)."""
+    fix: list[str] = []
+    legacy: list[str] = []
+    for path, text in bank.texts.items():
+        rel = boa_lock.posix_rel(path, bank.root)
+        blocks, findings = ml.parse_blocks(path, text, bank.types.names)
+        fix += [f.replace(path, rel, 1) for f in findings]
+        read = {b.line for b in blocks if b.id}
+        named = {f[len(path) + 1:].split(":")[0] for f in findings if f.startswith(path + ":")}   # their lines
+        lines = text.splitlines()
+        cut = max((n for n, x in enumerate(lines, 1) if x.strip() == ml.CUTOFF), default=0)
+        for n, x in enumerate(lines, 1):
+            if x.strip().startswith(ml.START) and n not in read and str(n) not in named:
+                if n < cut:
+                    legacy.append(f"{rel}:{n}")
+                else:
+                    fix.append(f"{rel}:{n}: not read as a memory block (in a fenced code block, or a malformed header)")
+    out = f"no valid memory id in {boa_lock.posix_rel(bank.dir, bank.root)}/: nothing to seed, no ledger written"
+    if not fix and not legacy:
+        return out + " (the memory bank holds no @@@memory-<N> block)"
+    if fix:
+        more = f" (+{len(fix) - 5} more)" if len(fix) > 5 else ""
+        out += ("; the blocks to fix: " + "; ".join(fix[:5]) + more
+                + ". Fix them (memory_lint.py lists every finding), then run --seed again")
+    if legacy:
+        more = f" (+{len(legacy) - 5} more)" if len(legacy) > 5 else ""
+        out += (f"; {len(legacy)} legacy block(s) before the cutoff marker ({', '.join(legacy[:5])}{more}) are never "
+                "adopted: that is what the cutoff is for — new memories go through memory_write.py")
+    return out
 
 
 def check_draft(fields: dict[str, str], text: str, names: list[str]) -> None:
@@ -305,8 +406,8 @@ def chain_head(by_id: dict[int, ml.Block], b: ml.Block) -> str:
     return f"memory-{b.id}"
 
 
-def resolve_targets(bank: Bank, ids: list[int]) -> list[ml.Block]:
-    by_id = bank.by_id()
+def resolve_targets(bank: Bank, ids: list[int], by_id: dict[int, ml.Block] | None = None) -> list[ml.Block]:
+    by_id = bank.by_id() if by_id is None else by_id
     out = []
     for i in ids:
         b = by_id.get(i)
@@ -338,13 +439,13 @@ def write_one(bank: Bank, a: argparse.Namespace, text: str) -> str:
         fields["supersedes"] = ",".join(f"memory-{i}" for i in ids)
     path = bank.target(a.type, fields["keywords"], a.file)
     if path not in bank.texts and os.path.exists(path):
+        readable(path, "the memory file")
         with open(path, encoding="utf-8") as fh:
             bank.texts[path] = fh.read()
-    bank.insert(path, render(fields, text, mid))
+    bank.insert(path, [render(fields, text, mid)])
     touched = {path}
-    for t in targets:
-        bank.stamp(t, mid)
-        touched.add(t.path)
+    bank.stamp([(t, mid) for t in targets])
+    touched.update(t.path for t in targets)
     bank.new_ledger.append({"id": mid, "file": boa_lock.posix_rel(path, bank.root), "brief": fields["brief"],
                             "datetime": fields["datetime"], "assigned_by": "memory_write"})
     bank.commit(touched)
@@ -386,6 +487,7 @@ def prefix_hash(lines: list[str]) -> str:
 
 def read_draft_file(bank: Bank, f: str) -> str:
     """A draft file's text; a staging file is read under its lock (an append in progress is never half-read)."""
+    readable(f, "the input")
     try:
         if bank.is_staging(f):
             with boa_lock.FileLock(boa_lock.lock_path(bank.state, f)), open(f, encoding="utf-8") as fh:
@@ -468,20 +570,34 @@ def ingest(bank: Bank, files: list[str], receipt: str | None = None) -> list[str
                               f"and \"{b[1].fields['brief']}\" ({b[0]}:{b[1].line}); a memory is superseded once")
             claimed[t] = n
     for n in range(len(drafts)):
-        resolve_targets(bank, finals[n])
+        resolve_targets(bank, finals[n], by_id)
     # dependency order: a superseded draft first (Kahn); among the drafts ready, the oldest first (datetime, then the
     # file's place in the batch, then the line), so ids ascend with time wherever the dependencies allow
+    # (a heap of the drafts ready: each pick costs log n, not a scan of every draft)
     fidx = {f: k for k, f in enumerate(files)}
     order: list[int] = []
-    done: set[int] = set()
-    while len(order) < len(drafts):
-        ready = [n for n in range(len(drafts)) if n not in done and all(d in done for d in deps[n])]
-        if not ready:
-            left = [drafts[n][1].fields["brief"] for n in range(len(drafts)) if n not in done]
-            raise Refused(f"supersession cycle among the drafts: {', '.join(left)}")
-        pick = min(ready, key=lambda n: (drafts[n][1].fields["datetime"], fidx[drafts[n][0]], drafts[n][1].line))
+    waiting = {n: len(deps[n]) for n in range(len(drafts))}   # the deps not placed yet (a repeated one counts twice)
+    users: dict[int, list[int]] = {}
+    for n in range(len(drafts)):
+        for d in deps[n]:
+            users.setdefault(d, []).append(n)
+
+    def key(n: int) -> tuple[str, int, int, int]:
+        return drafts[n][1].fields["datetime"], fidx[drafts[n][0]], drafts[n][1].line, n
+
+    ready = [key(n) for n in range(len(drafts)) if not waiting[n]]
+    heapq.heapify(ready)
+    while ready:
+        pick = heapq.heappop(ready)[-1]
         order.append(pick)
-        done.add(pick)
+        for u in users.get(pick, []):
+            waiting[u] -= 1
+            if not waiting[u]:
+                heapq.heappush(ready, key(u))
+    if len(order) < len(drafts):
+        done = set(order)
+        left = [drafts[n][1].fields["brief"] for n in range(len(drafts)) if n not in done]
+        raise Refused(f"supersession cycle among the drafts: {', '.join(left)}")
     # supersession runs forward in time: every superseding draft is strictly newer than what it supersedes
     for n in order:
         f, b = drafts[n]
@@ -500,6 +616,7 @@ def ingest(bank: Bank, files: list[str], receipt: str | None = None) -> list[str
     touched: set[str] = set()
     report: list[str] = []
     stamp = ml.now_stamp()
+    pending: dict[str, list[str]] = {}   # per file, its new blocks in id order: inserted in one pass per file
     for n in order:
         f, b = drafts[n]
         fields = {k: v for k, v in b.fields.items() if k in ml.BASE}
@@ -509,9 +626,10 @@ def ingest(bank: Bank, files: list[str], receipt: str | None = None) -> list[str
             fields["supersedes"] = ",".join(f"memory-{i}" for i in sup)
         path = bank.target(fields["type"], fields["keywords"], None)
         if path not in bank.texts and os.path.exists(path):
+            readable(path, "the memory file")
             with open(path, encoding="utf-8") as fh:
                 bank.texts[path] = fh.read()
-        bank.insert(path, render(fields, b.text, mid))
+        pending.setdefault(path, []).append(render(fields, b.text, mid))
         touched.add(path)
         assigned[n] = mid
         report.append(f"memory-{mid} <- \"{fields['brief']}\" ({boa_lock.posix_rel(path, bank.root)})")
@@ -519,12 +637,13 @@ def ingest(bank: Bank, files: list[str], receipt: str | None = None) -> list[str
                                 "datetime": fields["datetime"], "assigned_by": "ingest", "draft_sha256": digest[n]})
         bank.entries[mid] = bank.new_ledger[-1]
         mid += 1
+    for path, new in pending.items():
+        bank.insert(path, new)
     # stamps: reparse the written texts so each target's header line is current
     blocks = {b.id: b for b in bank.reparse(touched) if b.id}
-    for n in order:
-        for i in finals[n] + [assigned[d] for d in deps[n]]:
-            bank.stamp(blocks[i], assigned[n])
-            touched.add(blocks[i].path)
+    pairs = [(blocks[i], assigned[n]) for n in order for i in finals[n] + [assigned[d] for d in deps[n]]]
+    bank.stamp(pairs)
+    touched.update(t.path for t, _ in pairs)
     bank.commit(touched)
     report += skips
     if receipt:
@@ -542,6 +661,7 @@ def write_receipt(bank: Bank, receipt: str, files: list[str], found: list[tuple[
                         "sha256": prefix_hash(raw[f][:last]) if last else None})
     doc = {"schema": "boa/ingest-receipt/1", "datetime": ml.real_now().strftime("%Y-%m-%dT%H:%M:%SZ"),
            "ids": ids, "files": entries}
+    replaceable(receipt)   # checked up front too (run): here for a path that changed since
     t = f"{receipt}.tmp.{os.getpid()}"
     with open(t, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(doc, fh, indent=1)
@@ -555,6 +675,7 @@ def mark(bank: Bank, receipt: str, train: str) -> list[str]:
     Lane files are not marked (they go with their worktree): one that is gone is reported, never refused."""
     if not re.fullmatch(r"TRAIN-\d+", train):
         raise Refused(f"--train {train!r}: a merge train id TRAIN-<n>")
+    readable(receipt, "the receipt")
     try:
         with open(receipt, encoding="utf-8") as fh:
             doc = json.load(fh)
@@ -577,6 +698,7 @@ def mark(bank: Bank, receipt: str, train: str) -> list[str]:
             if not last:
                 out.append(f"{path}: nothing was ingested from it: no marker")
                 continue
+            replaceable(str(path))   # the marker is renamed into place: never onto a device, FIFO or directory
             lk = boa_lock.FileLock(boa_lock.lock_path(bank.state, path)).__enter__()
             locks.append(lk)
             try:
@@ -651,7 +773,7 @@ def repair_ledger(bank: Bank, adopt: list[int], reason: str) -> list[str]:
         for t in ml.sup(b):
             if b.id in before and t in before and t in by_id and ml.succ_of(by_id[t]) is None \
                     and not by_id[t].fields.get("superseded-by"):
-                bank.stamp(by_id[t], b.id)
+                bank.stamp([(by_id[t], b.id)])
                 touched.add(by_id[t].path)
                 out.append(f"stamped memory-{t} superseded-by memory-{b.id} (the interrupted write's stamp)")
     for b in sorted(by_id.values(), key=lambda x: x.id):
@@ -771,6 +893,8 @@ def run(argv: list[str], done: dict) -> int:
         if a.seed:
             bank.load()
             n = bank.seed_if_missing(explicit=True)
+            if not n:
+                raise Refused(nothing_to_seed(bank))
             bank.commit(set())
             print(f"memory-write: ledger seeded with {n} id(s) ({boa_lock.posix_rel(bank.ledger, bank.root)})")
             return 0
@@ -799,6 +923,11 @@ def run(argv: list[str], done: dict) -> int:
                 r = os.path.normcase(os.path.realpath(a.receipt))
                 if r.startswith(os.path.normcase(os.path.realpath(bank.dir)) + os.sep):
                     raise Refused(f"--receipt {a.receipt}: keep receipts outside the memory bank")
+                if any(same_file(a.receipt, f) for f in a.ingest):
+                    raise Refused(f"--receipt {a.receipt}: it is one of the files to ingest; name another file")
+                if not os.path.isdir(os.path.dirname(os.path.abspath(a.receipt))):
+                    raise Refused(f"--receipt {a.receipt}: its directory does not exist")
+                replaceable(a.receipt)   # before the ingest: a refused receipt leaves the bank untouched
             bank.load()
             bank.seed_if_missing()
             for line in ingest(bank, a.ingest, a.receipt):

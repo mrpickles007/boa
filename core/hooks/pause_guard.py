@@ -3,6 +3,8 @@
 pause-project), a SUB-AGENT's tool calls are denied except, exactly, what it needs to stop cleanly:
 - writing its own resume file <own worktree>/.lane-resume/<role>.md and its memories file .lane-resume/memories.md
   (file-write events);
+- handing back its final report (the neutral tool kind `report`: the call some runtimes deliver a sub-agent's report
+  through; refusing it would lose the report);
 - shell commands made only of these commands, joined by `&&`, `;`, `||` or newlines (no pipe, no background, no subshell):
   - read-only git, exactly as `git -c core.fsmonitor=false -c diff.external= status|rev-parse …` and
     `… diff|log|show --no-textconv --no-ext-diff …`, and `git add` / `git commit` (no -c), in its own worktree (its
@@ -10,7 +12,8 @@ pause-project), a SUB-AGENT's tool calls are denied except, exactly, what it nee
     commit message `$(cat <<'EOF' … EOF)`;
   - appending an id-less memory block to its own `.lane-resume/memories.md`: `cat >> <own worktree>/.lane-resume/
     memories.md <<'EOF' … EOF` (the block's content is the memory lint's to judge);
-  - `rm` of its own scratch subdir <scratch root>/<session>/scratchpad/<own task>-<role>[/…] (literal paths);
+  - `rm` of its own scratch entry <scratch root>/<…>/<own task>-<role>[/…] (literal paths), its place under the
+    root given by the layout BOA_SCRATCH_GLOB (the entry at its last level, every level above it matching the glob);
   - `kill [-SIGNAL]` of its own PIDs: a process whose working directory is in its own worktree or scratch subdir
     (read from /proc: on a system without it, macOS and Windows, no PID can be proven own and every kill is refused
     while paused, a declared limit that fails closed).
@@ -142,14 +145,15 @@ class Lane:
         self.cfg, self.task, self.wt = cfg, task, wt
 
     def scratch(self, p):
-        """p is (inside) <scratch>/<session>/scratchpad/<task>-<role>: literal, no glob, no '..'."""
+        """p is (inside) an own task entry <scratch>/<…>/<task>-<role> of the layout (cfg scratch_glob): literal, no
+        glob, no '..'."""
         if not self.task or "$" in p or "`" in p or re.search(r"[*?\[]", p) or ".." in CONFIG.parts(p):
             return False
         p, root = sl(p), sl(self.cfg["scratch"])
-        if not under(p, root):
+        if not under(p, root) or p == root:
             return False
-        rel = CONFIG.parts(p[len(root) + 1:])
-        return len(rel) >= 3 and rel[1] == "scratchpad" and rel[2].startswith(self.task + "-")
+        entry = CONFIG.scratch_entry(CONFIG.parts(p[len(root) + 1:]), self.cfg["scratch_glob"])
+        return bool(entry and entry.startswith(self.task + "-"))
 
     def pid(self, word):
         """A PID whose process works in the own worktree or an own scratch subdir."""
@@ -257,11 +261,28 @@ def named_lane(wt):
     return r"(?:" + alt + r")[/\\]([^/\\\s'\";&|()<>`$]+)"
 
 
+def flag_kind(pause):
+    """What stands at the PAUSE path when it is not a regular file, as boa_tool.pause_state (loaded by path) names it:
+    a FIFO, a device, a socket, a directory (special_kind: one stat, never an open, a FIFO would hang the guard) or a
+    dangling symbolic link. Called only when something is there (lexists) and it is not a regular file; toward the
+    safe side it is a pause whatever it is: "not a regular file" when it cannot be told what it is (boa_tool missing
+    or broken, the stat failing)."""
+    try:
+        tools = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+        spec = importlib.util.spec_from_file_location("boa_tool", os.path.join(tools, "boa_tool.py"))
+        bt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bt)
+        return bt.pause_state(pause)[1] or "not a regular file"
+    except Exception:  # noqa: BLE001 - cannot tell: still a pause
+        return "not a regular file"
+
+
 def decide(ev, cfg):
     """None to allow, or the reason to deny (ev: the neutral pre-tool event, hook_config.GuardEvent)."""
     pause = os.path.join(cfg["repo"], cfg["lead_dir"], "PAUSE")
-    if not ev.agent_id or not os.path.isfile(pause):
+    if not ev.agent_id or not os.path.lexists(pause):
         return None
+    special = None if os.path.isfile(pause) else flag_kind(pause)
     tool, ti, cwd = ev.tool, ev.input, ev.cwd
     task, wt = bound_lane(cfg, ev.agent_id)
     if wt is None:
@@ -272,6 +293,8 @@ def decide(ev, cfg):
         if m:
             task, wt = own_lane(cfg, sl(cfg["wt"]) + "/" + m.group(1))
     lane = Lane(cfg, task, wt)
+    if tool == "report":   # its final report, handed back: the pause wants it delivered
+        return None
     if tool == "file-write":
         p = resolve(ti.get("file_path") or "", cwd)
         if wt and posixpath.dirname(p) == wt + "/.lane-resume" and RESUME.fullmatch(posixpath.basename(p)):
@@ -282,14 +305,18 @@ def decide(ev, cfg):
                 return None
         except ValueError:
             pass
-    try:
-        with open(pause, encoding="utf-8", errors="replace") as fh:
-            why = re.sub(r"[\x00-\x1f]+", " ", fh.read(400).split("\n", 1)[0]).strip()[:200]
-    except OSError:
-        why = ""
+    if special:   # never opened: a FIFO would hang every call
+        why = f"the pause flag {pause} is {special}, not a regular file: treated as paused, remove it to resume"
+    else:
+        try:
+            with open(pause, encoding="utf-8", errors="replace") as fh:
+                why = re.sub(r"[\x00-\x1f]+", " ", fh.read(400).split("\n", 1)[0]).strip()[:200]
+        except OSError:
+            why = ""
     role = re.sub(r"[^A-Za-z0-9_-]", "", ev.agent_type) or "<role>"
     w = wt or sl(cfg["wt"]) + "/<task>"
     t = task or "<task>"
+    entry = "/".join(c if not re.search(r"[*?\[]", c) else "<dir>" for c in cfg["scratch_glob"][:-1]) + f"/{t}-{role}"
     head = f"{TAG} project paused{' (' + why + ')' if why else ''}: stop now. "
     if role == "integrator":
         head += ("Integrator: a merge command already running may finish, but do not start the next merge "
@@ -301,9 +328,9 @@ def decide(ev, cfg):
             f"git -C {w} add -A && git -C {w} commit -m 'wip({t}): <what>' (or say "
             "what stays uncommitted); read git only as git -c core.fsmonitor=false -c diff.external= status, or "
             "diff/log/show with --no-textconv --no-ext-diff. 3) Clean up only your own: "
-            f"rm -rf <scratch>/<session>/scratchpad/{t}-{role}, kill <your PIDs>; name in your resume file any "
+            f"rm -rf <scratch>/{entry.lstrip('/')}, kill <your PIDs>; name in your resume file any "
             f"other resource your lane started (labelled {cfg['label_key']}={t}): the lead removes it. "
-            "4) End your turn with a short report. Nothing else runs "
+            "4) End your turn with a short report (handing it back is allowed). Nothing else runs "
             "until the lead resumes the project.")
 
 

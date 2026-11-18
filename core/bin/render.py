@@ -18,7 +18,8 @@ Rules:
 - `--set KEY=VALUE` (repeatable, before the command) adds a render-time key that is not in the config
   (the installer's `BOA_INSTALL_DATE`, `BOA_SCRATCH_ABS`, …); it may not redefine a config key.
 - Idempotent: a destination whose content is already the rendering is not rewritten. Files are written
-  through a temporary file and a rename, with the template's permission bits.
+  through a temporary file and a rename, with the template's permission bits. A destination that exists and is not a
+  regular file (a device, a FIFO, a socket, a directory) is an error: the rename would replace it.
 
 Usage (OPTS = [--config FILE] [--set KEY=VALUE]...):
   render.py OPTS SRC [DST]            render one file (to stdout without DST)
@@ -45,6 +46,7 @@ sys.dont_write_bytecode = True
 # the one config reader lives with the tools (`<home>/tools/boa_config.py`, beside this `<home>/bin/`)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools"))
 import boa_config  # noqa: E402
+import boa_tool  # noqa: E402
 
 DEFAULT_CONFIG = os.path.join(".boa", "config.env")
 
@@ -98,7 +100,12 @@ def read_template(src: str) -> str:
 
 
 def write_if_changed(dst: str, content: str, mode: int) -> bool:
-    """Write `content` to `dst` unless it already holds it. Returns True when written."""
+    """Write `content` to `dst` unless it already holds it. Returns True when written. A `dst` that exists and is not a
+    regular file (a device, a FIFO, a socket, a directory) is refused before it is read: a rename would replace it."""
+    try:
+        boa_tool.check_replaceable(dst)
+    except boa_tool.NotRegularFile as exc:
+        raise RenderError(str(exc)) from None
     data = content.encode("utf-8")
     try:
         with open(dst, "rb") as fh:

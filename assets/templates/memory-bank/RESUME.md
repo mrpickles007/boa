@@ -12,10 +12,10 @@
    `09-OPERATING-PROCEDURES.md` (how the lead and the agents actually work).
 4. The lead's live state in the main checkout's `{{BOA_LEAD_DIR}}/` (machine-local, never committed): `README.md`,
    `PAUSE` and `RESUME-LEAD.md` (only after a pause), `lanes.md` (registry: the newest line per lane wins) and
-   `lanes/<task>.md` (lane journal: every agent's final report, written by the SubagentStop hook).
+   `lanes/<task>.md` (lane journal: every agent's final report, written by the sub-agent stop hook).
 5. Run `.boa/bin/lead-status.sh`: every open lane with its head, last agent's verdict and suggested next step,
    resume files, warnings, open PRs, Open HITL, new guard denials, DONE/total (the disk alert and the suite timings come
-   from the project's own measuring). (The SessionStart
+   from the project's own measuring). (The session-start
    hook already put its top lines into the session context.)
 
 ## Where things are

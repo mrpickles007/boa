@@ -16,6 +16,15 @@
   warns; building the environment needs network access once and about 480 MB.
 - **The status screen's admission needs Linux figures.** The memory and load it reads come from `/proc`; elsewhere
   admission is "unknown" and the lead decides from the capabilities record.
+- **No hook before the wiring.** A runtime new to the project (a pause resumed in it, a clone) runs none of BOA's
+  hooks until its agent has wired it: until then `AGENTS.md`'s read order is the only path to the resume and wiring
+  steps, so that file must reach the agent whole (a runtime may cut it at its instruction-file size cap).
+- **Runtimes take turns.** Two agent runtimes working on the same project at the same time is not supported (one
+  lead, one scratch root); resuming in one after the other has paused is.
+- **Another runtime's wiring is kept by discipline.** The guard refuses shell writes and deletions of the runtime
+  configuration names in the main checkout only: the lead's file-editing tools, git verbs and lane worktrees are not
+  guarded there, so the rule "never touch another runtime's wiring without your yes" is the agents' discipline and
+  the reviewer's check.
 - **Text checks are heuristics.** The language and no-trace checks of BOA's own files, and the guard's command
   parsing, are documented heuristics, not proofs.
 
@@ -68,5 +77,11 @@ hook passes on samples in the new language ([07 Memory and state](07-memory-and-
 
 **How do I stop everything for a while?** `pause-project`; `resume-project` picks up from the saved state
 ([10 Pause, resume, close](10-pause-resume-close.md)).
+
+**How do I update BOA?** Ask the agent to update BOA to the new release (it also checks for one periodically). It
+keeps a copy of the old skill, updates the skill through the channel that installed it, shows you a dry run, installs,
+and merges every file the project changed with BOA's new version, never overwriting yours; then it re-wires its
+runtime, runs the self-tests and commits `chore: update BOA to vX.Y.Z`
+([02 Install and wiring](02-install-and-wiring.md#re-installing-and-upgrading)).
 
 **How do I remove BOA?** [12 Uninstall](12-uninstall.md).

@@ -1,7 +1,7 @@
 ---
 description: Run the whole BOA discipline on this project — mode bootstrap on the first run, then the autonomous loop (lanes → pipeline → merge trains) until the project is complete or a HITL blocks everything.
 ---
-<!-- BOA neutral command metadata: the header above (description, optional argument-hint) is converted by the agent to its runtime's format at bootstrap; the body is the runtime-neutral contract. -->
+<!-- BOA neutral command metadata: the header above (description, optional arguments) is converted by the agent to its runtime's format at bootstrap and at every re-wire, after checking the runtime's latest documentation and installed version (OR-63); the body is the runtime-neutral contract. -->
 
 You are the **lead** of {{BOA_PROJECT_NAME}}. Run the project end to end, autonomously, and forget nothing.
 
@@ -9,7 +9,12 @@ You are the **lead** of {{BOA_PROJECT_NAME}}. Run the project end to end, autono
 1. Read `AGENTS.md` (its Modus operandi first: the mood behind every rule), `docs/agent-handbook.md`, the runtime's own instruction file if any,
    `memory-bank/RESUME.md`, every `memory-bank/*.md` (08 and
    09 are binding), then `{{BOA_LEAD_DIR}}/` (README, open-items, pending files, `lanes.md`).
-2. If `{{BOA_LEAD_DIR}}/PAUSE` exists, the project is paused: run `/resume-project` instead and stop here.
+2. If `{{BOA_LEAD_DIR}}/PAUSE` exists, the project is paused: run `/resume-project` instead (it wires this runtime
+   first when needed) and stop here.
+2b. **This runtime wired?** If the capabilities record does not name the runtime you run in, or BOA's agents,
+   commands or hooks are not wired in it, redo the capability self-assessment for it and wire it now (§1's first
+   bullet), doing only what this runtime needs and leaving the other runtime's wiring untouched, then go on with the
+   loop. A project whose plan has tasks is never bootstrapped again (§1 runs only on an empty plan).
 3. `.boa/bin/lead-status.sh`; the project's disk measurement (project-wiring "measure commands"; start it if not running); state in one line the
    milestone, the lanes and the next action.
 
@@ -38,11 +43,12 @@ Repeat until every milestone is DONE or a HITL blocks all remaining work:
 1. **Sync reality:** git, worktrees, open PRs, the registry, the newest journal entries (OR-17: harvest finished
    agents first).
 2. **Fill the lanes** (09 §3): eligible tasks from `plan_lanes.py`, hotspots serialised, product first, admission
-   from `lead-status.sh` (lane cap {{BOA_LANE_CAP}}); `.boa/bin/lane-worktree.sh add <task> <branch>`; a registry
+   from `lead-status.sh` (lane cap {{BOA_LANE_CAP}}) and, before every fill, the project's disk alert (project-wiring
+   "measure commands", 09 §10): while it is set no new lane starts; `.boa/bin/lane-worktree.sh add <task> <branch>`; a registry
    line; choose `builder` or `builder-mid` (OR-34; when in doubt `builder`); a full brief (09 §4, paste
-   `{{BOA_LEAD_DIR}}/brief-common.md`); the Agent description starts with the task id.
+   `{{BOA_LEAD_DIR}}/brief-common.md`); the sub-agent spawn's description starts with the task id.
 3. **Run each lane's pipeline** (09 §5): builder → reviewer ⇄ builder delta → tester; same agent per role within the
-   task (OR-16); docs-only lanes skip review; loop guard after 3 failed attempts (09 §6).
+   task (OR-16; resume or fresh agent: 09 §5.3); docs-only lanes skip review; loop guard after 3 failed attempts (09 §6).
 4. **Merge trains** (09 §7): 3–4 green lanes (or the 60-minute / critical-path exceptions) → brief the integrator
    with the order, the `docs(memory)` lines and the folds.
 5. **At every train:** the correspondence check (`trace_check.py`, 09 §26; new mismatches → tasks or ledger items), the duration review (09 §15: gate total, per step, critical-path suite of each parallel step,

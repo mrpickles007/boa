@@ -67,8 +67,13 @@ fail-open guard, a regression, a crash on reachable input, a delicate path witho
 acceptance criterion) or NON-BLOCKING (naming, wording, docs, cosmetics, hardening against unreachable input,
 simplification), with a reason; the lead may re-class. Re-reviews are delta reviews by the same reviewer: the changed
 lines, what they touch, and whether each earlier finding is resolved. A lane leaves review after a round with no
-findings, or after two consecutive rounds with no blocking finding (the second only if code changed). Open
-non-blocking findings are fixed in the same round or relocated to a named task, never lost. A clean verdict says what
+findings, or after two consecutive rounds with no blocking finding (the second only if code changed). An open
+non-blocking finding is fixed in the same round when it is small (inside the lane's own task and needing no decision
+not yet taken, whatever the size of the edit: wording, docs, a rename, a local fix, test data, a missing test, a
+hardening of the lane's own code) and relocated to a named task only when it is large (it needs a decision not yet
+taken, belongs to another task or lane, waits on a task not yet landed, or is new scope); never lost. The fix goes to
+the light builder for wording, docs, renames, one-line fixes and test data, to the full builder for a delicate path or
+non-trivial code, and to the full builder when in doubt. A clean verdict says what
 was tried and failed to break the code. (Rule OR-52 of the [rules pool](../references/rules-pool.md).)
 
 ## Tests: targeted runs, case selection and plant rounds
@@ -86,8 +91,15 @@ Tests are targeted and fast:
 - **Plant rounds.** Where no mutation tool fits (or as its complement), the tester plants faults by hand: one per
   checked behaviour (invert a condition, drop a check, change a boundary). Each plant runs only the cases that cover
   the planted line, in its own scratch copy of the worktree, independent plants in parallel up to the lane cap; a
-  plant counts as caught only when a covering case fails for the planted reason, after a green unplanted baseline
-  (otherwise a crash is a false kill). The whole suite runs once at the start and once at the end, never per plant.
+  plant counts as caught only when a covering case fails for the planted reason or its run times out while a covering
+  case is running, confirmed by a replay alone unless the first run already ran alone (killed by timeout, recorded as
+  such; a replay that ends gives its own verdict; a timeout outside every covering case, confirmed the same way, is
+  invalid, like a failure there; when the cap clipped the bound, a confirmed timeout is skipped, never killed or
+  invalid: raise the cap), after a green clean baseline run (otherwise a crash is a false kill) that
+  finished inside the bound (every run has a timeout derived from its own recorded duration and never above the cap
+  `run_timeout_cap_s` of the budgets file); a plant whose clean baseline run is already over the bound is skipped
+  (not run): raise the bound within the cap or narrow the cases, as for a mutant. The whole suite runs once at the
+  start and once at the end, never per plant.
   At most 3 plant rounds per lane ([Stage budgets](#stage-budgets)).
 - **Suites without waste.** One behaviour per case, small independent cases, heavy setup once per suite, no check
   duplicated across suites, a costly case split, self-test plant cases (the permanent plants a suite or gate self-test keeps) next to the
@@ -116,7 +128,9 @@ reference: [references/mutation-testing.md](../references/mutation-testing.md).
 The project has ONE gate, written by the agent in the project's own task runner or CI (the project-wiring item
 "the project gate"): the checks it chooses for its stack, plus BOA's kept checks, which it must call and never
 remove: `trace_check.py` (every contract clause has a running test), `handbook_drift.py`, `memory_lint.py`, and
-`trace_check.py --close` at close. A misalignment is a red gate, never a warning. Builders
+`trace_check.py --close` at close. A misalignment is a red gate, never a warning. BOA's checks are light static steps
+run where BOA is installed (the main checkout's `.boa/tools/`); with a remote runner only the heavy steps go there,
+from the committed tree ([09](09-remote-runner.md)). Builders
 and testers run one step or the changed files; the integrator runs it once per train on the stacked tip. Its self-test
 is discipline too: one planted defect per step, caught once. Its timings feed duration control
 ([08 Measuring](08-measuring.md#duration-control)).
@@ -156,6 +170,17 @@ serialises so only one lane changes the schema at a time (rule OR-62 of the [rul
 
 When the same finding, failure or bounce survives 3 builder attempts, the lane stops, the blocker is written down and
 the lead asks you, with a recommendation (usually a final, targeted fourth attempt). Other lanes keep going.
+
+## The project's user documentation
+
+The agent handbook is the agents' map; the project's own user documentation (the README, guides, API reference,
+changelog) is the users' one. A change that alters what a user sees (behaviour, a command, a flag, a config key, an API,
+an error message) updates the user documentation in the same change, or its task is not done, and the reviewer treats
+a missing update like a missing handbook row. At bootstrap the agent proposes the README plus `docs/`, minus the files
+BOA installs there (the handbook, the notice, the rules file, the parity folder and, in a clean-room project, its
+protocol file; the API and specification folders stay user documentation unless you decide otherwise), you confirm or change that set, and it is listed
+in the handbook's file map. Before every release or milestone closure a docs sweep task checks every user chapter
+against what landed; the release notes are checked like any text that leaves the machine.
 
 ## Asking the user (HITL)
 

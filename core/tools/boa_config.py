@@ -11,7 +11,8 @@ backtick, `\\` or `"` inside); only `BOA_[A-Z0-9_]+` keys; a key defined twice, 
 `export`, a trailing comment, a CR of a CRLF file, a value bash would expand) raises ConfigError naming the line. A
 leading byte-order mark is ignored.
 `load()` returns every BOA_* key: the environment wins, then `<home>/config.env` (env BOA_CONFIG overrides the path;
-home = the directory holding tools/), then the defaults below.
+home = the directory holding tools/), then the defaults below; a config path that is a special file or a dangling
+symbolic link raises ConfigError naming it (check_config_path), never read as a missing file.
 `main_of(dir)`: the main checkout of the repository `dir` belongs to absolute.
 `dir` itself unless it is the top of a LINKED worktree (`--git-dir` differs from `--git-common-dir`; a plain checkout,
 a submodule checkout and a directory that is not the top of a checkout — a fixture inside a repository — are their
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
 
@@ -53,7 +55,7 @@ DEFAULTS = {
     "BOA_SPEC_FILE": "memory-bank/02-SPECIFICATIONS.md",
     "BOA_REGISTER_FILE": "memory-bank/04-ARCHITECTURE.md",
     "BOA_FEATURES_FILE": "docs/parity/features.toml",
-    "BOA_TEST_GLOBS": "tests/scripts/*.test.sh",
+    "BOA_TEST_GLOBS": "",
     "BOA_PLAN_CHECKLIST_HEAD": "## Coverage checklist",
     "BOA_DECISIONS_FILE": "memory-bank/06-DECISIONS.md",
     "BOA_LEAD_DIR": ".lead",
@@ -154,14 +156,47 @@ def parse(text: str, where: str = "config.env") -> dict[str, str]:
     return out
 
 
+def special_kind(path: str) -> str | None:
+    """What `path` is when it exists and is not a regular file ("a character device", "a block device", "a FIFO", "a
+    socket", "a directory"; a symbolic link judged by what it points to), else None (a regular file, or nothing there).
+    Only a stat: nothing is opened, so a FIFO or an endless device cannot make the caller wait."""
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return None
+    if stat.S_ISREG(mode):
+        return None
+    return ("a character device" if stat.S_ISCHR(mode) else "a block device" if stat.S_ISBLK(mode)
+            else "a FIFO" if stat.S_ISFIFO(mode) else "a socket" if stat.S_ISSOCK(mode)
+            else "a directory" if stat.S_ISDIR(mode) else "not a regular file")
+
+
+def check_config_path(path: str) -> None:
+    """Raise ConfigError naming `path` when the config file there cannot be read as one: a special file (special_kind;
+    never opened: a FIFO would hang the reader), a dangling symbolic link (read as a missing file it would put the
+    defaults in place of the configuration it was meant to name, and a guard would check the wrong paths) or a path
+    that cannot be checked. Nothing there and a regular file pass. Called by load() and by the guards' reader
+    (hooks/hook_config.parse_env) before any open, so the guards fail closed on all of them."""
+    try:
+        kind = special_kind(path)   # one stat before the open: a FIFO never hangs a tool
+    except OSError as exc:
+        raise ConfigError(f"{path}: cannot be checked ({exc.strerror or exc}): not read") from None
+    if kind is None and os.path.lexists(path) and not os.path.exists(path):
+        kind = "a dangling symbolic link"
+    if kind is not None:
+        raise ConfigError(f"{path} is {kind}, not a regular file: not read")
+
+
 def load(home: str = HOME) -> dict[str, str]:
     path = os.environ.get("BOA_CONFIG") or os.path.join(home, "config.env")
     cfg = dict(DEFAULTS)
+    check_config_path(path)
     try:
         with open(path, encoding="utf-8") as fh:
             cfg.update(parse(fh.read(), path))
     except FileNotFoundError:
-        pass
+        if os.path.lexists(path):   # a link that dangled after the check: never the defaults in its place
+            raise ConfigError(f"{path} is a dangling symbolic link, not a regular file: not read") from None
     cfg.update({k: v for k, v in os.environ.items() if k.startswith("BOA_")})
     return cfg
 

@@ -1,6 +1,6 @@
 All rights reserved.
 
 The BOA logo (docs/assets/logo.png) belongs to its copyright holder, named in
-REUSE.toml. It is not covered by the licences of BOA's code (AGPL-3.0-only) or
-templates (MIT-0). It may be displayed in copies and modified versions of BOA
-to identify BOA; no other right is granted.
+REUSE.toml. It is not covered by the licences of BOA's code (AGPL-3.0-only and
+MIT) or texts (CC-BY-4.0). It may be displayed in copies and modified versions
+of BOA to identify BOA; no other right is granted.

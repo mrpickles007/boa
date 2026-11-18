@@ -34,6 +34,8 @@ Usage:  python3 -I .boa/tools/memory_lint.py [--drafts] [--ledger FILE | --no-le
         python3 -I .boa/tools/memory_lint.py --staged     the staged memory bank (pre-commit)
   path: files or directories (every *.md under them); default: the project's memory bank (BOA_MEMORY_DIR, default
   memory-bank). Last line: "memory-lint: <n> block(s) in <m> file(s), <k> finding(s)".
+A file to lint or the id ledger that is a FIFO, a device, a socket or a directory is never opened (one stat first: a
+FIFO would hang the lint): it is a finding naming it.
 Exit: 0 no finding, 1 findings, 2 usage (a path that does not exist, an unreadable memory-types file).
 Also the shared parser of memory_search.py, memory_write.py, metalearning.py and the memory hooks.
 """
@@ -93,11 +95,18 @@ class Block:
         return not self.fields.get("superseded-by")
 
 
+DATETIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")   # ASCII digits only
+
+
 def parse_datetime(value: str) -> datetime.datetime | None:
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value):
+    """A UTC datetime from exactly YYYY-MM-DDTHH:MM:SSZ in ASCII digits, or None (any other digit is refused; a
+    real date and time: no leap second, no hour 24, no year 0). The fields go straight to datetime, the same result as
+    strptime with that format for ASCII digits, without its cost: every search reads every block's datetime."""
+    if not DATETIME.fullmatch(value):
         return None
     try:
-        return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        return datetime.datetime(int(value[0:4]), int(value[5:7]), int(value[8:10]), int(value[11:13]),
+                                 int(value[14:16]), int(value[17:19]), tzinfo=datetime.timezone.utc)
     except ValueError:
         return None
 
@@ -211,9 +220,20 @@ def judged_lines(text: str) -> list[tuple[int, str]]:
     return out
 
 
-def parse_blocks(path: str, text: str, names: list[str] | None = None, drafts: bool = False) -> tuple[list[Block], list[str]]:
-    """(blocks, findings) of one file's text (the per-block checks; links are checked by check_links)."""
-    if names is None:
+def legacy_ids(text: str) -> list[int]:
+    """The ids of the `@@@memory-<N>` header lines before the file's last cutoff marker: legacy blocks the lint never
+    judges and the ledger never adopts, whose ids are still taken (the next id is above them: no id twice)."""
+    lines = text.splitlines()
+    cut = max((i for i, line in enumerate(lines) if line.strip() == CUTOFF), default=0)   # no marker: none
+    return [int(m.group(1)) for line in lines[:cut] for m in [HEADER.match(line.strip())] if m and m.group(1)]
+
+
+def parse_blocks(path: str, text: str, names: list[str] | None = None, drafts: bool = False,
+                 check: bool = True) -> tuple[list[Block], list[str]]:
+    """(blocks, findings) of one file's text (the per-block checks; links are checked by check_links). check=False:
+    the same blocks, no findings (the field checks skipped: what a search or a write that only reads the blocks
+    needs)."""
+    if names is None and check:
         names = memory_types.load().names
     blocks: list[Block] = []
     findings: list[str] = []
@@ -223,12 +243,15 @@ def parse_blocks(path: str, text: str, names: list[str] | None = None, drafts: b
         stripped = line.strip()
         m = HEADER.match(stripped)
         if m:
+            mid = int(m.group(1)) if m.group(1) else None
+            if not check:
+                cur, body = Block(path, n, mid, dict(ATTR.findall(m.group(2))), "", 0, stripped), []   # last wins
+                continue
             if cur:
                 findings.append(f"{path}:{n}: a block starts inside the block opened at line {cur.line} (no nesting; "
                                 f"close it with {END})")
             fields, problems = parse_header(m.group(2), drafts)
             problems += check_fields(fields, names)
-            mid = int(m.group(1)) if m.group(1) else None
             if drafts and mid is not None:
                 problems.append("a draft has no id (ids are assigned by memory_write.py --ingest)")
             if not drafts and mid is None:
@@ -239,16 +262,17 @@ def parse_blocks(path: str, text: str, names: list[str] | None = None, drafts: b
             cur, body = Block(path, n, mid, fields, "", 0, stripped), []
         elif stripped == END:
             if not cur:
-                findings.append(f"{path}:{n}: {END} with no open block")
+                if check:
+                    findings.append(f"{path}:{n}: {END} with no open block")
                 continue
-            if not "\n".join(body).strip():
+            if check and not "\n".join(body).strip():
                 findings.append(f"{path}:{cur.line}: the block has no text")
             cur.text, cur.end = "\n".join(body), n
             blocks.append(cur)
             cur = None
         elif cur:
             body.append(line)
-    if cur:
+    if cur and check:
         findings.append(f"{path}:{cur.line}: the block is not closed ({END} missing before the end of the file)")
     return blocks, findings
 
@@ -333,11 +357,46 @@ def check_links(blocks: list[Block]) -> list[str]:
     return out
 
 
+def special(path: str) -> str | None:
+    """The finding for a path that exists and is not a regular file (a FIFO, a device, a socket, a directory; a link
+    judged by its target) or cannot be checked, else None: one stat, never an open (a FIFO would hang the reader)."""
+    import boa_tool
+    try:
+        kind = boa_tool.special_kind(path)
+    except OSError as exc:
+        return f"{path}: cannot be checked ({exc.strerror or exc}): not read"
+    return f"{path}: {kind}, not a regular file: not read" if kind else None
+
+
+def read_files(files: list[str]) -> tuple[dict[str, str], list[str], list[str]]:
+    """(texts, findings, read errors) of the files to lint: a special file is a finding and is not read; a file that
+    fails to read is an error line and lints as empty."""
+    texts: dict[str, str] = {}
+    findings: list[str] = []
+    errors: list[str] = []
+    for f in files:
+        bad = special(f)
+        if bad:
+            findings.append(bad)
+            continue
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                texts[f] = fh.read()
+        except OSError as exc:
+            texts[f] = ""
+            errors.append(f"{f}: {exc.strerror or exc}")
+    return texts, findings, errors
+
+
 def read_ledger(path: str, text: str | None = None) -> tuple[dict[int, dict], list[str]]:
-    """The ledger's entries by id (from `text` when given, else the file; a missing file: none)."""
+    """The ledger's entries by id (from `text` when given, else the file; a missing file: none; a special file: none
+    and its finding, never opened)."""
     entries: dict[int, dict] = {}
     errs: list[str] = []
     if text is None:
+        bad = special(path)
+        if bad:
+            return entries, [bad]
         try:
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
@@ -366,6 +425,8 @@ def check_ledger(blocks: list[Block], ledger_path: str, whole: bool, text: str |
         if any(b.id for b in blocks):
             return [f"{ledger_path}: no id ledger: run `memory_write.py --seed` once to adopt the existing ids"]
         return []
+    if text is None and special(ledger_path):
+        return [str(special(ledger_path))]   # never opened; its blocks are not judged against a ledger not read
     entries, out = read_ledger(ledger_path, text)
     ids = {b.id for b in blocks if b.id}
     for b in blocks:
@@ -493,15 +554,11 @@ def main(argv: list[str]) -> int:
         if no_ledger:
             ledger = None
         files = files_of(paths)
-        texts = {}
-        for f in files:
-            try:
-                with open(f, encoding="utf-8", errors="replace") as fh:
-                    texts[f] = fh.read()
-            except OSError as exc:
-                texts[f] = ""
-                print(f"{f}: {exc.strerror or exc}")
+        texts, unread, errors = read_files(files)
+        for e in errors:
+            print(e)
         blocks, findings = lint_texts(texts, names, drafts, ledger, whole)
+        findings = unread + findings
     for e in findings:
         print(e)
     print(f"memory-lint: {len(blocks)} block(s) in {len(files)} file(s), {len(findings)} finding(s)")

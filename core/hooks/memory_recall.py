@@ -3,11 +3,14 @@
 
 Purpose:  put the relevant current memories in front of the agent when it needs them: after a failure and at session
           start.
-When:     runs by itself on a failed tool call; the session status calls `--session`. A sub-agent gets its task's
-          memories through its brief and searches again itself at start.
+When:     runs by itself on a failed tool call; the session status calls `--session`, and the wiring runs `--session`
+          at a sub-agent's start where the runtime injects context there. A sub-agent gets its own task's memories
+          through its brief (its task is bound only after it starts) and searches again itself at start.
 Wire:     the runtime's failed-tool event, mapped onto the neutral `post-tool-failure` event (with `error`, the error
           text) and piped to `<BOA_PYTHON> -I .boa/hooks/memory_recall.py`, `2>/dev/null || true`, timeout 10; the
-          verdict's `context` carries the memories.
+          verdict's `context` carries the memories. The runtime's sub-agent start event (neutral `subagent-start`),
+          where it injects context: `<BOA_PYTHON> -I .boa/hooks/memory_recall.py --session`, timeout 10, its plain
+          text passed on as the context.
 Verify:   `python3 -I .boa/hooks/memory_recall.py --session` prints the memory-writing reminder.
 Outputs:  the memories as the verdict's context (at most 5, then "+k more: <the memory_search command>"), else
           nothing.

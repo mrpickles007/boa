@@ -9,7 +9,9 @@ description, else of the prompt. A spawn whose result carries no agent id yet (a
 a foreground agent ends) stays unbound: lanes are spawned so that the id is known at the spawn (in the background).
 The record is one JSON line {"ts", "agent", "task"} appended to <REPO>/<BOA_STATE_DIR>/agent-bindings.jsonl (dir
 0700, file 0600; machine-local, git-ignored with .boa/). It prints nothing and always exits 0: a binding that is not
-written leaves the agent unbound, which the guards handle (confined to the lane worktrees, logged).
+written leaves the agent unbound, which the guards handle (confined to the lane worktrees, logged); a state file that
+is not a regular file (a FIFO, a device, a directory) is stat'ed, never opened: nothing is written or read, the agent
+stays unbound.
 Known limits: an agent's first tool calls can run before its binding lands (the spawn result arrives after the agent
 starts), so it is unbound for those calls; a description whose first task id is the wrong one binds the wrong lane,
 which fails toward deny (its own worktree is then "another lane"); the spawn rule that every description starts with
@@ -25,6 +27,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import sys
 import time
 
@@ -57,12 +60,27 @@ def spawn_fields(ev):
     return ev.result_agent, [t for t in texts if isinstance(t, str) and t]
 
 
+def regular_or_missing(path):
+    """True when nothing is at path or a regular file is: one stat, never an open (a FIFO would hang the spawn hook
+    or a guard's verdict). Anything else (a FIFO, a device, a directory, a path that cannot be checked) is False: the
+    binding is then neither written nor read, the agent stays unbound (the guards' fail-safe case)."""
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def record(cfg, agent, task):
     path = os.path.join(cfg["state_dir"], FILE)
     os.makedirs(cfg["state_dir"], 0o700, exist_ok=True)
+    if not regular_or_missing(path):
+        return
     line = json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "agent": agent, "task": task})
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as fh:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                 | getattr(os, "O_BINARY", 0), 0o600)   # O_BINARY: no CRLF from the Windows C runtime
+    with os.fdopen(fd, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(line + "\n")
 
 
@@ -70,8 +88,11 @@ def task_of(cfg, agent_id):
     """The newest task bound to agent_id, or None."""
     if not AGENT_ID.fullmatch(str(agent_id or "")):
         return None
+    path = os.path.join(cfg["state_dir"], FILE)
+    if not regular_or_missing(path):
+        return None
     try:
-        with open(os.path.join(cfg["state_dir"], FILE), "rb") as fh:
+        with open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
             fh.seek(max(0, fh.tell() - TAIL))
             lines = fh.read().decode("utf-8", "replace").splitlines()

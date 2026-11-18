@@ -50,7 +50,7 @@ Output, in this order:
      "unavailable"), Open HITL items of the active context (BOA_ACTIVE_CONTEXT), the open items (count, the oldest's
      age, the three oldest) and the plan lines not folded (count, the oldest's age), guard denials since the last
      check (<log dir>/guard-denials.jsonl);
-  5. last line: DONE/total from tools/plan_lanes.py on BOA_PLAN_FILE.
+  5. last line: DONE/total from tools/plan_lanes.py on BOA_PLAN_FILE ("no plan file at <path>" when it is missing).
 Child processes (the forge CLI, the plan count, the probes) are bounded in time; their output goes through a temp file
 in BOA_LEAD_TMPDIR (default the system temp dir), removed on every exit.
 Environment (tests): BOA_MEMINFO, BOA_LOADAVG (files read instead of /proc/meminfo, /proc/loadavg), BOA_NPROC.
@@ -215,8 +215,28 @@ def guard_check(env: bt.Env) -> list[str]:
 
 # --- pieces of the screen ----------------------------------------------------------------------------------------
 
+SKIPPED: set[str] = set()   # the special files already said in this run
+
+
+def readable(path: str) -> bool:
+    """`path` may be opened: a regular file or nothing there. A FIFO, a device, a socket or a directory is skipped
+    with one line naming it (one stat, no open: a FIFO would hang the screen)."""
+    try:
+        kind = bt.special_kind(path)
+    except OSError:
+        return False
+    if kind is not None:
+        if path not in SKIPPED:
+            SKIPPED.add(path)
+            print(f"lead-status: skipped {path}: it is {kind}, not a regular file", file=sys.stderr)
+        return False
+    return True
+
+
 def last_entry(path: str) -> tuple[str, str] | None:
     """(header, verdict) of the newest journal entry, or None."""
+    if not readable(path):
+        return None
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             lines = fh.read().split("\n")
@@ -288,6 +308,8 @@ def ledger_stats(lines: list[str], path: str, now: int) -> list[tuple[str, str]]
 
 
 def read_lines(path: str) -> list[str] | None:
+    if not readable(path):
+        return None
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             return fh.read().splitlines()
@@ -325,7 +347,7 @@ def admission(env: bt.Env, lanes: int, lead: str) -> str:
         reasons.append(f"load {load} >= {mx}")
     if by_mem <= 0:
         reasons.append(f"MemAvailable {avail} MiB < {min_mb} MiB")
-    if os.path.exists(os.path.join(lead, "PAUSE")):
+    if bt.pause_state(os.path.join(lead, "PAUSE"))[0]:   # anything at the flag's path, as the pause guard sees it
         reasons.append("project paused")
     facts = (f"active {lanes} of cap {cap}; load {load} of max {mx} on {cpus} CPU(s); MemAvailable {avail} MiB "
              f"(min {min_mb} + {lane_mb} per lane)")
@@ -455,7 +477,11 @@ def status(env: bt.Env, gh: bool, mark: bool) -> list[str]:
 
     # --- warnings
     flag = os.path.join(lead, "PAUSE")
-    if os.path.isfile(flag):
+    paused, kind = bt.pause_state(flag)
+    if paused and kind:   # never opened: a FIFO would hang the screen
+        warn.insert(0, f"PROJECT PAUSED: the flag {flag} is {kind}, not a regular file (not read): remove it "
+                       f"({bt.pause_removal(kind)}) to resume")
+    elif paused:
         fl = read_lines(flag) or []
         at = next((x[len("paused_at="):] for x in fl if x.startswith("paused_at=")), "")
         why = next((x[len("reason="):] for x in fl if x.startswith("reason=")), "")
@@ -552,6 +578,8 @@ def status(env: bt.Env, gh: bool, mark: bool) -> list[str]:
     gl = os.path.join(logs, "guard-denials.jsonl")
     total, newest = 0, ""
     try:
+        if not readable(gl):   # one stat first: a special file is skipped with a line naming it
+            raise FileNotFoundError(gl)
         with open(gl, "rb") as fh:
             data = fh.read()
         total = data.count(b"\n")
@@ -579,9 +607,13 @@ def status(env: bt.Env, gh: bool, mark: bool) -> list[str]:
 
     # --- progress (last line)
     report = ""
+    plan = env.path(env["BOA_PLAN_FILE"])
+    if not os.path.isfile(plan):   # a brownfield project may keep its plan elsewhere: say so, never "failed"
+        out.append(f"DONE: unavailable (no plan file at {env['BOA_PLAN_FILE'] or '<empty>'}: set BOA_PLAN_FILE)")
+        return out
     if shutil.which(env["BOA_PYTHON"]):
         _, report = bt.run_bounded([env["BOA_PYTHON"], "-I", os.path.join(env.home, "tools", "plan_lanes.py"), "--plan",
-                                    env.path(env["BOA_PLAN_FILE"])], 30, grace=grace())
+                                    plan], 30, grace=grace())
     prog = ""
     for x in report.split("\n"):
         f = x.split("|")

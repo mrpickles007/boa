@@ -1,7 +1,7 @@
 ---
 description: Close the project — ask the owner how it ends (by project type and goal), check secrets, residue and forgotten work, do every closing step, report.
 ---
-<!-- BOA neutral command metadata: the header above (description, optional argument-hint) is converted by the agent to its runtime's format at bootstrap; the body is the runtime-neutral contract. -->
+<!-- BOA neutral command metadata: the header above (description, optional arguments) is converted by the agent to its runtime's format at bootstrap and at every re-wire, after checking the runtime's latest documentation and installed version (OR-63); the body is the runtime-neutral contract. -->
 
 Close {{BOA_PROJECT_NAME}} (09 §14). Nothing is declared done before every check below passes.
 
@@ -42,7 +42,8 @@ staged after it: §4 requires zero pending folds, and §5 may remove `.boa/` and
    rewrite and keeping it private.
 2. **Completeness:** `python3 -I .boa/tools/trace_check.py --close` at 0 mismatches (every live task DONE, every
    feature DONE and traced to running tests, every contract closed and every clause tested, the residue register and
-   the transit queue empty); release acceptance done (full-scope mutation on the delicate paths, end to end, security
+   the transit queue empty); the docs sweep (OR-74: every user chapter of the project's user documentation checked
+   against what landed); release acceptance done (full-scope mutation on the delicate paths, end to end, security
    re-audit, zero open findings).
 3. **Freshness:** zero outdated pins except documented holds (09 §19).
 4. **Final duration review:** the project's timing check and throughput review (project-wiring

@@ -263,6 +263,13 @@ def sync_docs(t: Types, docs: list[str], write: bool) -> list[str]:
     """The docs whose generated sections differ from the types file (rewritten when `write`)."""
     stale = []
     for d in docs:
+        try:
+            kind = _bt().special_kind(d)   # one stat before the open: a FIFO never hangs the sync
+        except OSError:
+            kind = None
+        if kind is not None:
+            print(f"memory-types: skipped {d}: it is {kind}, not a regular file", file=sys.stderr)
+            continue
         with open(d, encoding="utf-8", newline="") as fh:
             text = fh.read()
         new = regenerate(text, t)

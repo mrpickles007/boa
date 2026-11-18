@@ -81,9 +81,12 @@ command format. The flow of each: [03 The workflow](03-the-workflow.md) and
 
 ## What changes in your repository
 
-The installer writes under `.boa/` (git-ignored, except the three files the agent writes for the project:
-`.boa/config.env`, `.boa/protected-commands.conf`, `.boa/memory-types.json`) and, outside it: `AGENTS.md` (a marked
-block in an existing one), `memory-bank/`, `docs/agent-handbook.md`, `docs/parity/`, the lead directory
+The installer writes under `.boa/` (git-ignored, except what the agent writes or adapts for the project:
+`.boa/config.env`, `.boa/protected-commands.conf`, `.boa/memory-types.json`, `.boa/markers.json`, the stack plug-in
+`.boa/stack/`) and,
+outside it: `AGENTS.md` (a marked block in an existing one; with `BOA_AGENTS_BLOCK=pointer` only a short pointer to
+`docs/boa-rules.md`, which then holds BOA's rules), `memory-bank/`, `docs/agent-handbook.md`, `docs/boa-notice.md` (the
+attribution of BOA's files and their licences), `docs/parity/`, the lead directory
 (git-excluded), the forge's PR/MR template, and marked blocks in `.gitignore`, `.gitattributes`, `.git/info/exclude`
 and an existing `memory-bank/04-ARCHITECTURE.md`. It never overwrites a file of yours. The full list:
 [02 Install and wiring](02-install-and-wiring.md#what-the-installer-writes).

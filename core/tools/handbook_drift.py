@@ -16,7 +16,10 @@ correct map of the installed tooling:
   no-pointer       memory-bank/RESUME.md does not point to AGENTS.md
   no-section       a role contract (.boa/agents/*.md) has no "## Agent handbook" section
   section-without-handbook   that section never names docs/agent-handbook.md
-  broken-link      a relative link in AGENTS.md or the handbook does not resolve
+  broken-link      a relative link in AGENTS.md, the handbook or docs/boa-rules.md (BOA's rules when AGENTS.md holds
+                   only a pointer block; checked when it exists) does not resolve
+  not-text         a file the check reads (the handbook, AGENTS.md, docs/boa-rules.md, memory-bank/RESUME.md, a role
+                   contract, the stack rows) is not UTF-8 text: named with the first bad byte, no other finding about it
 A tool card is a "#### Tool card: <name>" heading followed, up to the next heading, by the field lines
 "- Files:" (the backticked paths the card covers), "- Purpose:", "- When:", "- Wire:", "- Verify:" and "- Limits:".
 The check knows no agent runtime: the agent's runtime files (its renderings of the agents and commands, its settings,
@@ -25,7 +28,8 @@ path outside .boa/ named in the handbook is not checked.
 A path counts as named when it appears whole: letters, digits and _ . / - only, bounded by any other character.
 Machine-local files (__pycache__, *.pyc, .DS_Store) are ignored.
 
-Output: one "drift: <kind>: <detail>" line per finding, then "SUMMARY: <n> drift finding(s)".
+Output: one "drift: <kind>: <detail>" line per finding, then "SUMMARY: <n> drift finding(s)"; a file name that is not
+UTF-8 is printed with those bytes escaped (\\xNN).
 Exit status: 0 no drift, 1 drift found, 2 usage or unreadable project.
 Read-only; Python 3 standard library only.
 """
@@ -39,6 +43,7 @@ import sys
 sys.dont_write_bytecode = True
 
 HANDBOOK = "docs/agent-handbook.md"
+RULES = "docs/boa-rules.md"     # BOA's rendered rules when AGENTS.md holds the pointer block (BOA_AGENTS_BLOCK=pointer)
 TOOL_DIRS = (".boa/bin", ".boa/hooks", ".boa/tools", ".boa/stack", ".boa/agents", ".boa/commands")
 CARD_DIRS = (".boa/bin", ".boa/hooks", ".boa/tools")
 CARD_FIELDS = ("Files", "Purpose", "When", "Wire", "Verify", "Limits")
@@ -51,11 +56,21 @@ LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 
 def read(path: str) -> str | None:
+    """The file's text, None when it cannot be read; text that is not UTF-8 raises UnicodeDecodeError."""
     try:
         with open(path, encoding="utf-8") as handle:
             return handle.read()
     except OSError:
         return None
+
+
+def shown(text: str) -> str:
+    """text printable whatever it holds: a file name's bytes that are not UTF-8 (surrogate escapes) as \\xNN, any other
+    lone surrogate (a Windows name) as \\udNNN; never an encoding error."""
+    try:
+        return text.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "backslashreplace").decode("utf-8")
 
 
 def named(text: str, path: str) -> bool:
@@ -93,9 +108,19 @@ def cards(handbook: str) -> tuple[set[str], list[str]]:
 
 def check(root: str) -> list[str]:
     findings: list[str] = []
-    handbook = read(os.path.join(root, HANDBOOK))
+    bad: set[str] = set()   # the files that are not UTF-8 text: one not-text finding each, no other finding about them
+
+    def text_of(rel: str) -> str | None:
+        try:
+            return read(os.path.join(root, rel))
+        except UnicodeDecodeError as exc:
+            findings.append(f"not-text: {rel}: not UTF-8 text (byte {exc.start})")
+            bad.add(rel)
+            return None
+
+    handbook = text_of(HANDBOOK)
     if handbook is None:
-        return [f"missing-path: {HANDBOOK} (the handbook itself)"]
+        return findings or [f"missing-path: {HANDBOOK} (the handbook itself)"]
 
     for rel in tool_files(root, TOOL_DIRS):
         if not named(handbook, rel):
@@ -113,17 +138,20 @@ def check(root: str) -> list[str]:
         if not os.path.exists(os.path.join(root, path)):
             findings.append(f"missing-path: {path}")
 
-    agents_md = read(os.path.join(root, "AGENTS.md")) or ""
-    if HANDBOOK not in agents_md:
+    agents_md = text_of("AGENTS.md") or ""
+    if HANDBOOK not in agents_md and "AGENTS.md" not in bad:
         findings.append("no-link: AGENTS.md does not link docs/agent-handbook.md")
-    text = read(os.path.join(root, "memory-bank", "RESUME.md"))
-    if text is None or "AGENTS.md" not in text:
+    text = text_of("memory-bank/RESUME.md")
+    if (text is None or "AGENTS.md" not in text) and "memory-bank/RESUME.md" not in bad:
         findings.append("no-pointer: memory-bank/RESUME.md does not point to AGENTS.md")
 
     agents_dir = os.path.join(root, ".boa", "agents")
     names = sorted(n for n in os.listdir(agents_dir) if n.endswith(".md")) if os.path.isdir(agents_dir) else []
     for name in names:
-        text = read(os.path.join(agents_dir, name)) or ""
+        text = text_of(".boa/agents/" + name)
+        if text is None and ".boa/agents/" + name in bad:
+            continue
+        text = text or ""
         match = re.search(r"^## Agent handbook[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
         if match is None:
             findings.append(f"no-section: .boa/agents/{name}")
@@ -131,16 +159,22 @@ def check(root: str) -> list[str]:
             findings.append(f"section-without-handbook: .boa/agents/{name}")
 
     if os.path.isdir(os.path.join(root, ".boa", "stack")):
-        rows = read(os.path.join(root, ".boa", "stack", "handbook-rows.md"))
+        rows = text_of(".boa/stack/handbook-rows.md")
         block = STACK_BLOCK.search(handbook)
-        if rows is None:
+        if ".boa/stack/handbook-rows.md" in bad:
+            pass
+        elif rows is None:
             findings.append("stack-rows: the stack plug-in ships no .boa/stack/handbook-rows.md")
         elif block is None:
             findings.append("stack-rows: the handbook has no stack block")
         elif block.group(1).strip() != rows.strip():
             findings.append("stack-rows: the handbook's stack block differs from .boa/stack/handbook-rows.md")
 
-    for rel, text in (("AGENTS.md", agents_md), (HANDBOOK, handbook)):
+    linked = [("AGENTS.md", agents_md), (HANDBOOK, handbook)]
+    rules = text_of(RULES)
+    if rules is not None:
+        linked.append((RULES, rules))
+    for rel, text in linked:
         base = os.path.dirname(os.path.join(root, rel))
         for target in LINK.findall(text):
             if re.match(r"^[a-z][a-z0-9+.-]*:", target) or target.startswith("#"):
@@ -171,7 +205,7 @@ def main(argv: list[str]) -> int:
         return 2
     findings = check(root)
     for finding in findings:
-        print(f"drift: {finding}")
+        print("drift: " + shown(finding))
     print(f"SUMMARY: {len(findings)} drift finding(s)")
     return 1 if findings else 0
 

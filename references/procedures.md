@@ -7,7 +7,7 @@
 
 | # | Procedure | Installed home | Tools | Enforced / recorded by |
 |---|---|---|---|---|
-| 1 | Session start (lead) | 09 §1, `RESUME.md` | `lead-status.sh`, project-wiring "measure commands" | SessionStart hook (`session_status.py`) |
+| 1 | Session start (lead) | 09 §1, `RESUME.md` | `lead-status.sh`, project-wiring "measure commands" | session-start hook (`session_status.py`) |
 | 2 | Live state registry and journal | 09 §2, handbook §6 | `lane-journal.sh` | sub-agent stop hook (`subagent_stop.py`) |
 | 3 | Filling lanes, admission, lane cap | 09 §3, `/run-project` | `plan_lanes.py`, `lane-worktree.sh`, `lead-status.sh`, project-wiring "capabilities record" | registry lines |
 | 4 | Agent briefs | 09 §4, `<lead>/brief-common.md` | — | the journal (reports stand alone) |
@@ -35,7 +35,7 @@
 | 26 | Residue (per lane, milestone, final) | AGENTS.md §4, 04 register | project-wiring "deployed-instance objects" | the integrator |
 | 27 | Metalearning upkeep | 09 §16.4, 10 | `metalearning.py` | every report's trace |
 | 28 | Correspondence closes to zero | AGENTS.md §12, 09 §26, 02/03 markers | `trace_check.py` | integrator report every train; `/close-project` (0 mismatches) |
-| 29 | Memory blocks (write) and recall (read) | AGENTS.md §4 and §14, 09 §16.4 and §27, `memory-bank/README.md` | `memory_write.py`, `memory_lint.py`, `memory_search.py` | `memory_check.py` (PostToolUse), `memory_recall.py` (PostToolUseFailure), every report's `Memories used:` |
+| 29 | Memory blocks (write) and recall (read) | AGENTS.md §4 and §14, 09 §16.4 and §27, `memory-bank/README.md` | `memory_write.py`, `memory_lint.py`, `memory_search.py` | `memory_check.py` (`post-tool`), `memory_recall.py` (`post-tool-failure`), every report's `Memories used:` |
 | 30 | Sub-leads and lead-only powers | 09 §28, `.boa/agents/sub-lead.md` | `lead-status.sh`, `lane-worktree.sh` | the registry's owning lead, the plan's `managed by` |
 | 31 | Test evidence: both directions, real inputs, plants, budgets | 09 §29, builder/reviewer/tester contracts | the suites' case filters | the reviewer, the tester |
 | 32 | Project wiring and measuring as periodic tooling work | 09 §30, `references/project-wiring.md` | the project's own tools | seeded plan rows, every train's review |

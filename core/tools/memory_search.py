@@ -26,21 +26,23 @@ Usage:  python3 -I .boa/tools/memory_search.py [filters] [--all] [--brief] [--li
                 equally with its BM25 score, scaled the same way; (5) no false zero: with fewer BM25 candidates than
                 --limit, every memory left by the filters is compared by meaning (its keywords, brief and text, the
                 text cut to its first sentences for the model's input window; vectors cached by content hash in
-                .boa/embed/cache/memory-vectors.json — computed at write time by memory_write.py, lazily here for
-                anything missing; a cache, safe to delete, never a database) and those at cosine
-                0.5 or more are added after the BM25 ones, so a memory in another language with no shared word is
-                still found. The query and the re-rank sentences are embedded in their own call; the missing vectors
-                are filled in chunks of 256, saved after each, within 20 s: what is left is said ("N memories not yet
-                compared — they will be next time") and filled by the next queries. The line before the last says how the matches were ranked and whether the fallback ran;
+                .boa/embed/cache/memory-vectors.bin, a binary file appended to (VectorCache) — computed at write time
+                by memory_write.py, lazily here for anything missing; a cache, safe to delete, never a database) and
+                those at cosine 0.5 or more are added after the BM25 ones, so a memory in another language with no
+                shared word is still found. The query and the re-rank sentences are embedded in their own call; the
+                missing vectors are filled in chunks of 256, appended after each, within 20 s: what is left is said
+                ("N memories not yet compared — they will be next time") and filled by the next queries. The line
+                before the last says how the matches were ranked and whether the fallback ran;
                 when the environment is missing or fails it prints a WARNING naming the fix and gives the BM25 result
                 (never fails because of it)
-  --warm        cache the vector of every memory not cached yet, in chunks, no time limit (boa install runs it
-                once; best effort, exit 0); --warm-ids N,M: only those memories (memory_write's detached child)
+  --warm        cache the vector of every memory not cached yet, in chunks of 2048 (one model start each), no time
+                limit (boa install runs it once; best effort, exit 0); --warm-ids N,M: only those memories
+                (memory_write's detached child)
   --all         superseded blocks too (default: current ones only — no `superseded-by`)
   --chain ID    the supersession chain of a memory: its predecessors (what it superseded, recursively) and its
                 successors up to the current head, oldest first, the head marked
-  --next-id     the next free id (the highest of the bank and the id ledger, plus one) — informative only: ids are
-                assigned by memory_write.py
+  --next-id     the next free id (the highest of the bank, its legacy blocks before a cutoff marker and the id ledger,
+                plus one) — informative only: ids are assigned by memory_write.py
   --brief       one line per match: `memory-N file:line datetime type brief`
   path          files or directories (every *.md under them); default: the project's memory bank (BOA_MEMORY_DIR)
                 and the lead dir (BOA_LEAD_DIR of the main checkout, also from a worktree; drafts included)
@@ -49,18 +51,22 @@ the block. When --limit leaves ranked matches out (--error, --query), the line b
 <m> more ranked match(es) not shown (--limit <L>): run again with a higher --limit to see them" (never a silent cut).
 Last line: "memory-search: <n> match(es) in <k> block(s)". Exit 0 with a match, 1 with none, 2 on a usage
 error (also --limit below 1, a query with no searchable word, --query with --error, --chain or --next-id).
+A file to read (a memory file, the id ledger) that is a FIFO, a device, a socket or a directory is skipped with a
+"memory-search: WARNING skipped <path>" line before any open: nothing waits on it.
 Python 3 standard library only.
 """
 
 from __future__ import annotations
 
 import argparse
+import array
 import collections
 import datetime
 import hashlib
 import itertools
 import json
 import math
+import operator
 import os
 import re
 import subprocess
@@ -71,6 +77,7 @@ import unicodedata
 sys.dont_write_bytecode = True  # importing the sibling modules must leave no __pycache__ behind (zero residue)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import boa_config  # noqa: E402  (sibling module; `python3 -I` leaves the script directory off sys.path)
+import boa_lock  # noqa: E402
 import memory_lint as ml  # noqa: E402
 import memory_embed  # noqa: E402
 import memory_types  # noqa: E402
@@ -86,9 +93,16 @@ EMBED_TIMEOUT = 60  # seconds for one embedding call (query + sentences)
 K1, B = 1.5, 0.75   # BM25 (Okapi; the idf of Lucene, never negative)
 GRAM_WEIGHT = 0.3   # a Han/kana bigram match counts this much of a whole-word match
 SEM_MIN = 0.5       # the semantic fallback's least cosine similarity (unrelated texts score well below it)
-VECTORS = "memory-vectors.json"
+VECTORS = "memory-vectors.bin"
+OLD_VECTORS = "memory-vectors.json"   # the JSON cache of earlier versions: never read, deleted by the first save
+MAGIC = b"BOA-VEC\x01"   # the vector cache's format (VectorCache)
+KEY_BYTES = 32           # a record's key: the sha256 of the memory's summary
+LOCK_TIMEOUT = 10        # seconds a save waits for the cache's lock (then it is skipped: computed again later)
+SUM_FLAVOUR = sum([1e16, 1.0, -1e16])   # 1.0 where sum() compensates floats (Python 3.12+), 0.0 before: the cached
+#                                         lengths are reused only by a reader whose sum() gives the same last bits
 SUMMARY_CHARS = 500  # about the model's input window (128 tokens) for one memory's vector
-FILL_CHUNK = 256    # memories per embedding call when the vector cache is filled
+FILL_CHUNK = 256    # memories per embedding call when a query fills the vector cache (saved after each call)
+WARM_CHUNK = 2048   # the same for --warm (no time budget): fewer model starts, still saved as it goes
 NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}   # no console window flashing
 FILL_BUDGET = 20    # seconds a query may spend filling the vector cache (the rest waits for the next query)
 JOINERS = "._-"     # inside a word only, between two word characters (T-123, a.b, snake_case)
@@ -96,7 +110,7 @@ LGC = ("LATIN", "GREEK", "CYRILLIC")   # the scripts whose combining marks are a
 
 
 def bound(value: str, end: bool) -> datetime.datetime:
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):   # ASCII digits only: any other digit is not a date
         day = datetime.datetime.fromisoformat(value).replace(tzinfo=UTC)
         return day + datetime.timedelta(days=1, seconds=-1) if end else day
     when = ml.parse_datetime(value)
@@ -221,6 +235,13 @@ def embedder(main: str) -> tuple[list[str] | None, str]:
     (name@revision: what the vector cache is keyed on) when the command is there."""
     env = memory_embed.paths(main)
     try:
+        kind = boa_config.special_kind(env["stamp"])   # one stat before the open: a FIFO never hangs the search
+    except OSError:
+        kind = None   # a link loop, no permission: the open below fails at once, read as a missing environment
+    if kind is not None:
+        return None, (f"the memory search stamp {env['stamp']} is {kind}, not a regular file: not read; re-run "
+                      "`boa install` (it builds the environment again)")
+    try:
         with open(env["stamp"], encoding="utf-8") as fh:
             model = json.load(fh)["model"]
         name, revision = model["name"], str(model.get("revision", ""))
@@ -282,30 +303,104 @@ def summary(b: ml.Block) -> str:
     return " ".join(x for x in (head, text) if x)
 
 
+def norm(v) -> float:
+    """A vector's length, summed exactly as cosine() sums it (the same products, in the same order, into sum())."""
+    return math.sqrt(sum(map(operator.mul, v, v)))
+
+
 class VectorCache:
-    """Each memory's summary vector by content hash, in .boa/embed/cache/memory-vectors.json of the main checkout: a
+    """Each memory's summary vector by content hash, in .boa/embed/cache/memory-vectors.bin of the main checkout: a
     cache (filled lazily for new or changed memories; a missing or unreadable file, or one of another model identity
-    — name@revision — is simply rebuilt), never a database. save() merges: it re-reads the file, adds its own new
-    entries, drops only the stale keys it saw at its own read (an entry another process added meanwhile stays), then
-    replaces the file atomically; a write that fails is skipped."""
+    — name@revision — or vector length, is simply rebuilt), never a database. The file: MAGIC, a 4-byte little-endian
+    length and a JSON header {"model", "dim", "sum"}, then one fixed-size record per memory — its key (the sha256 of
+    its summary, 32 bytes) then its length and its `dim` numbers, every number a little-endian float64 (byteswapped on
+    a big-endian host): the exact values the embedder returned, and the length as this Python's sum() computes it
+    ("sum" = SUM_FLAVOUR; a reader with another one recomputes the lengths and its next save rewrites the file), so
+    the search ranks identically from the cache or from a fresh embedding. save() APPENDS the new records in place (a
+    write costs what it adds, not the whole file) under the cache's lock (boa_lock, a lock file beside it), after
+    reading what another process appended meanwhile (no duplicate); every vector this process computed is kept in
+    memory and written back if the file lost it meanwhile (deleted, replaced). A record cut by an interruption is
+    ignored by readers and cut off by the next save. Only a prune (save(keep): the stale keys this process saw at its
+    read), a new model or another sum() rewrites it, to a temp file renamed into place. A save that fails is skipped.
+    The JSON file of earlier versions (memory-vectors.json) is never read: the first save deletes it."""
 
     def __init__(self, main: str, model: str):
         self.path = os.path.join(memory_embed.paths(main)["dir"], "cache", VECTORS)
         self.model = model
-        self.vectors = self.read()
+        self.vectors: dict[str, array.array | list[float]] = {}   # every vector known: read or computed here
+        self.norms: dict[str, float] = {}
+        self.own: dict[str, list[float]] = {}   # every vector this process computed: written back if the file lost it
+        self.stored: dict[str, None] = {}   # the keys in the file as last read, in file order
+        self.dim, self.size, self.ident = 0, 0, None   # the file as last read: vector length, bytes, identity
+        self.head, self.tail, self.same_sum = b"", b"", True   # its header and last whole record; its sum() flavour
+        self.read()
         self.seen = set(self.vectors)   # the keys of this read: the only ones a prune may drop
-        self.added: dict[str, list[float]] = {}
 
-    def read(self) -> dict[str, list[float]]:
+    def read(self) -> None:
+        """Bring this view up to date with the file: only what was appended when it is the same file grown (same
+        identity, same header, same last record), else the whole file. Nothing read is ever dropped from memory (a
+        vector stays valid for its model whatever happened to the file); a missing, unreadable, foreign or other-model
+        file adds nothing."""
         try:
-            with open(self.path, encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (OSError, ValueError):
-            return {}
-        if not (isinstance(data, dict) and data.get("model") == self.model and isinstance(data.get("vectors"), dict)):
-            return {}
-        return {k: v for k, v in data["vectors"].items() if isinstance(v, list) and v and all(
-            isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) for x in v)}
+            if boa_config.special_kind(self.path) is not None:   # never opened: a FIFO would hang the search
+                raise FileNotFoundError(self.path)               # skipped as a missing cache: computed again
+            with open(self.path, "rb") as fh:
+                st = os.fstat(fh.fileno())
+                ident = (st.st_dev, st.st_ino)
+                if self.ident == ident and st.st_ino and self.dim and st.st_size >= self.size:
+                    head = fh.read(len(self.head))
+                    fh.seek(self.size - len(self.tail))
+                    if head == self.head and fh.read(len(self.tail)) == self.tail:
+                        self.parse(fh.read(), self.size)   # records are only ever appended
+                        return
+                    fh.seek(0)
+                data = fh.read()
+        except OSError:
+            data, ident = b"", None
+        self.stored, self.dim, self.size, self.ident, self.head, self.tail = {}, 0, 0, ident, b"", b""
+        self.same_sum = True
+        if data[:len(MAGIC)] != MAGIC or len(data) < len(MAGIC) + 4:
+            return
+        start = len(MAGIC) + 4 + int.from_bytes(data[len(MAGIC):len(MAGIC) + 4], "little")
+        try:
+            head = json.loads(data[len(MAGIC) + 4:start].decode("utf-8"))
+        except ValueError:
+            return
+        dim = head.get("dim") if isinstance(head, dict) else None
+        if not isinstance(dim, int) or isinstance(dim, bool) or dim < 1 or head.get("model") != self.model \
+                or start > len(data):
+            return
+        # the lengths were summed by another sum() (Python before 3.12 does not compensate): recomputed here, and the
+        # next save rewrites the file with this one's
+        self.same_sum = head.get("sum") == SUM_FLAVOUR
+        self.dim, self.size, self.head = dim, start, data[:start]
+        self.parse(data[start:], start)
+
+    def record(self) -> int:
+        return KEY_BYTES + 8 * (self.dim + 1)
+
+    def parse(self, body: bytes, at: int) -> None:
+        """The whole records of `body` (the file from offset `at`): a torn last record is left out."""
+        rec = self.record()
+        whole = len(body) - len(body) % rec
+        nums = array.array("d")
+        nums.frombytes(body[:whole])
+        if sys.byteorder == "big":
+            nums.byteswap()
+        step = rec // 8
+        for i in range(0, whole // 8, step):
+            vec = nums[i + KEY_BYTES // 8 + 1:i + step]
+            n = nums[i + KEY_BYTES // 8] if self.same_sum else norm(vec)
+            # every number finite (a NaN or an infinity makes the sum non-finite: one pass in C, not one call per
+            # number), and the stored length too: anything else is never used, and is computed again (so is a vector
+            # of numbers so huge that their sum overflows: dropped, never a wrong score)
+            if math.isfinite(n) and math.isfinite(sum(vec)):
+                k = body[i * 8:i * 8 + KEY_BYTES].hex()
+                self.vectors[k], self.norms[k] = vec, n
+                self.stored[k] = None
+        if whole:
+            self.tail = body[whole - rec:whole]
+        self.size = at + whole
 
     @staticmethod
     def key(text: str) -> str:
@@ -313,28 +408,75 @@ class VectorCache:
 
     def add(self, pairs) -> None:
         for k, v in pairs:
-            self.vectors[k] = self.added[k] = v
+            self.vectors[k] = self.own[k] = v
+            self.norms[k] = norm(v)
+
+    def pack(self, items) -> bytes:
+        nums = array.array("d")
+        keys = []
+        for k, v in items:
+            keys.append(bytes.fromhex(k))
+            nums.append(self.norms[k] if k in self.norms else norm(v))
+            nums.extend(v)
+        if sys.byteorder == "big":
+            nums.byteswap()
+        raw = nums.tobytes()
+        step = 8 * (self.dim + 1)
+        return b"".join(k + raw[i * step:(i + 1) * step] for i, k in enumerate(keys))
 
     def save(self, keep: set[str] | None = None) -> None:
-        # best effort: two processes saving at once may lose an entry; a lost entry is simply recomputed later
         if not os.path.isdir(os.path.dirname(os.path.dirname(self.path))):
             return   # the environment is gone (uninstalled meanwhile): leave nothing behind
-        merged = {**self.read(), **self.added}
-        if keep is not None:
-            for k in self.seen - keep:
-                merged.pop(k, None)
-        tmp = f"{self.path}.{os.getpid()}.tmp"
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"model": self.model, "vectors": merged}, fh)
-            os.replace(tmp, self.path)
-        except OSError:
+            with boa_lock.FileLock(self.path[:-len(".bin")] + ".lock", timeout=LOCK_TIMEOUT):
+                self.write(keep)
+                try:
+                    os.unlink(os.path.join(os.path.dirname(self.path), OLD_VECTORS))
+                except OSError:
+                    pass
+        except (OSError, boa_lock.LockError):
+            pass   # best effort: what is not saved is computed again later
+
+    def write(self, keep: set[str] | None) -> None:
+        """Under the lock: catch up with the file, then append what it lacks of this process's vectors (also those it
+        lost meanwhile: deleted, or replaced by another model) — or rewrite the file when it is unusable, holds another
+        vector length or sum() flavour, or a prune drops keys."""
+        self.read()
+        drop = (self.seen - keep) & self.stored.keys() if keep is not None else set()
+        new = {k: v for k, v in self.own.items() if k not in self.stored and k not in drop}
+        fits = bool(self.dim) and all(len(v) == self.dim for v in new.values())
+        dim = self.dim if fits else len(next(iter(new.values()), ()))   # else: no usable file, or another length
+        if fits and self.same_sum and not drop:
+            if new:
+                with open(self.path, "r+b") as fh:
+                    fh.truncate(self.size)   # a record torn by an interrupted save goes
+                    fh.seek(self.size)
+                    fh.write(self.pack(new.items()))
+        elif dim and (new or drop or not self.same_sum):
+            items = [(k, self.vectors[k]) for k in self.stored if k not in drop and dim == self.dim]
+            items += [(k, v) for k, v in new.items() if len(v) == dim]
+            self.dim = dim
+            head = json.dumps({"model": self.model, "dim": dim, "sum": SUM_FLAVOUR}).encode("utf-8")
+            import boa_tool
+            boa_tool.check_replaceable(self.path)   # an OSError: not saved (best effort), the special file kept
+            tmp = f"{self.path}.{os.getpid()}.tmp"
             try:
-                os.unlink(tmp)
+                with open(tmp, "wb") as fh:
+                    fh.write(MAGIC + len(head).to_bytes(4, "little") + head + self.pack(items))
+                os.replace(tmp, self.path)
             except OSError:
-                pass
-        self.vectors = {**merged, **self.vectors}
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            for k in drop:   # a prune is the only thing that forgets a vector
+                self.vectors.pop(k, None)
+                self.norms.pop(k, None)
+                self.own.pop(k, None)
+            self.ident = None   # a new file: read it whole
+        self.read()
 
 
 def memories(n: int) -> str:
@@ -348,9 +490,10 @@ def test_number(name: str, default: int) -> int:
 
 
 def fill(cmd: list[str], cache: VectorCache, texts: dict[str, str], budget: float | None) -> tuple[int, str]:
-    """Embed the uncached `texts` (key -> summary) in chunks of FILL_CHUNK, saving after each one, until done or the
-    time `budget` (seconds; None = no limit) is spent: (how many are still missing, the reason it stopped or '')."""
-    chunk = test_number("BOA_MEMORY_FILL_CHUNK", FILL_CHUNK)
+    """Embed the uncached `texts` (key -> summary) in chunks of FILL_CHUNK (WARM_CHUNK with no budget: one model start
+    per chunk), saving after each one, until done or the time `budget` (seconds; None = no limit) is spent: (how many
+    are still missing, the reason it stopped or '')."""
+    chunk = test_number("BOA_MEMORY_FILL_CHUNK", FILL_CHUNK if budget is not None else WARM_CHUNK)
     todo = list(texts.items())
     start = time.monotonic()
     first = True
@@ -359,8 +502,10 @@ def fill(cmd: list[str], cache: VectorCache, texts: dict[str, str], budget: floa
         if not first and left is not None and left <= 1:
             return len(todo), ""
         part, todo = todo[:chunk], todo[chunk:]
-        # the first chunk always gets the full timeout: a slow machine still makes progress at every query
-        timeout = EMBED_TIMEOUT if first or left is None else min(EMBED_TIMEOUT, left)
+        # the first chunk always gets the full timeout: a slow machine still makes progress at every query; with no
+        # budget, EMBED_TIMEOUT per FILL_CHUNK memories of the chunk
+        timeout = EMBED_TIMEOUT * -(-len(part) // FILL_CHUNK) if left is None else \
+            EMBED_TIMEOUT if first else min(EMBED_TIMEOUT, left)
         first = False
         try:
             vecs = embed(cmd, [t for _, t in part], timeout)
@@ -441,17 +586,25 @@ def rank(blocks: list[ml.Block], query: str, main: str, limit: int,
         return ranked, how
     # no false zero: every memory left by the filters, by meaning, from the cache (filled now within a time budget)
     cache = VectorCache(main, model)
-    keys = {id(b): cache.key(summary(b)) for b in blocks}
-    texts = {keys[id(b)]: summary(b) for b in blocks if keys[id(b)] not in cache.vectors}
+    summaries = {id(b): summary(b) for b in (every if every is not None else blocks)}   # blocks are among every
+    keys = {i: cache.key(s) for i, s in summaries.items()}
+    texts = {keys[id(b)]: summaries[id(b)] for b in blocks if keys[id(b)] not in cache.vectors}
     missing, why = fill(cmd, cache, texts, test_number("BOA_MEMORY_FILL_BUDGET", FILL_BUDGET))
     if every is not None:
-        keep = {cache.key(summary(b)) for b in every}
+        keep = set(keys.values())
         if cache.seen - keep:
             cache.save(keep)
     seen = {id(b) for b in ranked}
-    near = sorted(((cosine(qv, cache.vectors[keys[id(b)]]), b) for b in blocks
-                   if id(b) not in seen and len(cache.vectors.get(keys[id(b)], ())) == len(qv)),
-                  key=lambda x: (-x[0], -(x[1].when() or newest).timestamp()))
+    # the cosine of cosine(), with the cached length of each memory's vector (the same sums: the same numbers)
+    qn = norm(qv)
+    near = []
+    for b in blocks:
+        k = keys[id(b)]
+        v = cache.vectors.get(k, ())
+        if id(b) not in seen and len(v) == len(qv):
+            vn = cache.norms[k]
+            near.append((sum(map(operator.mul, qv, v)) / (qn * vn) if qn and vn else 0.0, b))
+    near.sort(key=lambda x: (-x[0], -(x[1].when() or newest).timestamp()))
     extra = [b for c, b in near if c >= SEM_MIN]   # every one found: main() shows --limit and says how many more
     later = f"; {memories(missing)} not yet compared — they will be next time" + (f" ({why})" if why else "") \
         if missing else ""
@@ -460,16 +613,38 @@ def rank(blocks: list[ml.Block], query: str, main: str, limit: int,
                             f"embedded, the rest from the cache){later}")
 
 
+WARNED: set[str] = set()   # the special files already warned about in this run
+
+
+def regular(path: str) -> bool:
+    """`path` may be read: a regular file, or nothing there (the read then fails and is skipped). A FIFO, a device, a
+    socket or a directory is skipped with a WARNING before any open (a FIFO would hang the search); a path that cannot
+    be checked is skipped as an unreadable file is."""
+    import boa_tool
+    try:
+        kind = boa_tool.special_kind(path)
+    except OSError:
+        return False
+    if kind is not None:
+        if path not in WARNED:   # once per file, also when a run reads the bank twice (--next-id)
+            WARNED.add(path)
+            print(f"memory-search: WARNING skipped {path}: it is {kind}, not a regular file", file=sys.stderr)
+        return False
+    return True
+
+
 def load_blocks(paths: list[str], names: list[str]) -> list[ml.Block]:
     blocks: list[ml.Block] = []
     for f in ml.files_of(paths):
+        if not regular(f):
+            continue
         try:
             with open(f, encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
         except OSError:
             continue
-        blocks += [b for b in ml.parse_blocks(f, text, names)[0] if b.id is not None]
-        blocks += [b for b in ml.parse_blocks(f, text, names, drafts=True)[0] if b.id is None]
+        parsed = ml.parse_blocks(f, text, names, check=False)[0]   # one pass, no field checks: the search reads only
+        blocks += [b for b in parsed if b.id is not None] + [b for b in parsed if b.id is None]   # ids, then drafts
     return blocks
 
 
@@ -566,8 +741,18 @@ def main(argv: list[str]) -> int:
         return 0
 
     if a.next_id:
-        entries, _ = ml.read_ledger(os.path.join(mdir, ml.LEDGER))
-        print(f"memory-{max([0] + list(by_id) + list(entries)) + 1}")
+        ledger = os.path.join(mdir, ml.LEDGER)
+        entries, _ = ml.read_ledger(ledger) if regular(ledger) else ({}, [])
+        legacy = []   # the ids before a cutoff marker are taken too (memory_write's next id)
+        for f in ml.files_of([mdir]) if os.path.isdir(mdir) else []:
+            if not regular(f):
+                continue
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    legacy += ml.legacy_ids(fh.read())
+            except OSError:
+                continue   # an unreadable file is skipped, as load_blocks skips it
+        print(f"memory-{max([0] + list(by_id) + list(entries) + legacy) + 1}")
         return 0
     if a.chain:
         m = ml.MID.fullmatch(a.chain)

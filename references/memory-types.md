@@ -38,7 +38,7 @@ Rules for every block:
   --format-only`, which may carry `supersedes="memory-N"` (an existing final id) or `supersedes-brief="<brief>"`
   (another new block of the same lane or batch); the fold's `memory_write.py --ingest` resolves them and stamps both
   directions atomically. The id ledger `memory-bank/.memory-ids.jsonl`, written only by the tool, makes a
-  hand-written id fail the lint, the PostToolUse hook and the pre-commit.
+  hand-written id fail the lint, the post-tool hook and the pre-commit.
 - Supersession chains are always coherent: a memory is superseded at most ONCE (a single `superseded-by`); to
   replace a memory that is already superseded, supersede the CURRENT head of its chain (`memory_search.py --chain
   <id>` shows it); one memory may supersede several current memories (a merge); two memories superseding the same
@@ -62,8 +62,8 @@ Rules for every block:
 - **Checks:** `.boa/tools/memory_lint.py` validates every block (fields, the exact datetime format, the type from the
   configuration, ids unique and progressive, every `supersedes` id exists, the links agree both ways, no cycles, no
   fork, every supersession forward in time); the
-  project's `pre-commit` (project-wiring "git hooks") runs `memory_lint.py --staged` and refuses a commit with broken links; the PostToolUse hook
-  `.boa/hooks/memory_check.py` lints a memory file right after a Write or Edit of it; `.boa/tools/memory_search.py`
+  project's `pre-commit` (project-wiring "git hooks") runs `memory_lint.py --staged` and refuses a commit with broken links; the post-tool hook
+  `.boa/hooks/memory_check.py` lints a memory file right after a file write of it; `.boa/tools/memory_search.py`
   finds memories by keyword, type, task id or date (current ones by default, the supersession chain on request).
 - **Legacy cutoff:** in a memory file that already held notes before BOA (brownfield, refactor), the line
   `<!-- boa:memory-cutoff -->` separates them: everything above it is legacy and exempt from the checks; every
@@ -142,8 +142,8 @@ any diagnosis (OR-67), and the report cites what was found or says `none found`.
   environment `boa install` builds in `.boa/embed/` (a multilingual model: memories in the user's language are
   matched too; a query takes a few seconds while the model loads). No false zero: when BM25 finds fewer memories than `--limit`,
   every memory is also compared by meaning, so one in another language or with other words is still found (the
-  output says so); each memory's vector is cached by content hash, computed at install and when `memory_write.py` writes it (in the
-  background). On a large bank never embedded, a query fills the cache within a time budget and says how many
+  output says so); each memory's vector is cached by content hash (`.boa/embed/cache/memory-vectors.bin`, appended to,
+  safe to delete), computed at install and when `memory_write.py` writes it (in the background). On a large bank never embedded, a query fills the cache within a time budget and says how many
   memories it has not compared yet; the next queries finish the job.
   If the output carries a `memory-search: WARNING` line, the
   environment is missing or broken: re-run `boa install` (if that fails, ask the user for what it names).
@@ -152,13 +152,18 @@ any diagnosis (OR-67), and the report cites what was found or says `none found`.
 - If the search finds nothing and you then solve a non-obvious problem, **write the memory** (lesson, gotcha, trap,
   edgecase, …) so the next agent finds it.
 - **Cite** the final ids you relied on: `Memories used: memory-12, memory-31` (or `Memories used: none found`).
-- **What is wired:** the session-start status prints the current memories for every active task id; the
-  PostToolUseFailure hook `.boa/hooks/memory_recall.py` injects the gotcha/trap/lesson ids matching a failed tool
-  call's error text (where the runtime has that event; verified at install). A sub-agent gets its task's memories through its
-  **brief** — the lead pastes the `memory_search.py --task <T>` output ("memories to know") into every brief (09 §4); a
-  SubagentStart injection is NOT shipped (a runtime that injects SubagentStart context may get one the agent
-  writes: `.boa/hooks/agent_binding.py --task-of <agent id>`, then `memory_search.py --task <T>`). The hooks help; they never replace the
-  agent's own search.
+- **What is wired** (each where the runtime has the event; verified at every wiring, OR-63): the session-start status
+  prints the current memories for every active task id; the post-tool-failure hook `.boa/hooks/memory_recall.py`
+  injects the gotcha/trap/lesson ids matching a failed tool call's error text; at a sub-agent's start, where the
+  runtime injects context there, `.boa/hooks/memory_recall.py --session` gives the starting agent the memory reminder
+  and the current memories of every active lane (the lanes exist before the spawn; the agent→task binding lands only
+  after the agent starts, so no hook can pick the agent's own task at that moment). A sub-agent gets its own task's
+  memories through its **brief** — the lead pastes the `memory_search.py --task <T>` output ("memories to know") into
+  every brief (09 §4). **Discipline only:** no runtime event marks a decision, planning or the
+  close-out, and no shipped hook acts on a contract file's write (the post-write hook only lints the memory files):
+  at those moments the agent searches itself. A BOA update has its own procedure (09 §30, docs/02 "Re-installing and
+  upgrading"). The review moment is served in part by the sub-agent start hook, and for the rest by the brief's
+  "memories to know". The hooks help; they never replace the agent's own search.
 
 ## Where each memory goes (routing by type)
 
@@ -217,7 +222,7 @@ Exit codes: 0 ok, 1 refused or nothing found, 2 usage.
 | `--staged` | The staged memory bank, for a pre-commit hook the project wires (project-wiring "git hooks"). |
 | `--ledger FILE` / `--no-ledger` | Check against another ledger file, or skip the ledger check (a copy of a bank outside the project). |
 
-The PostToolUse hook `memory_check.py` runs the same lint on a memory file right after a Write or Edit of it and reports
+The post-tool hook `memory_check.py` runs the same lint on a memory file right after a file write of it and reports
 at once; repair a finding through `memory_write.py`, never by editing ids or links.
 
 ### `memory_search.py` — the recall
@@ -264,7 +269,7 @@ that existing blocks use: add the new one and supersede those blocks.
 ### The recall hooks (wired by the agent where the runtime has the event, `references/runtimes.md`)
 | Hook | What it does |
 |---|---|
-| `hooks/memory_recall.py` on a failed tool call (PostToolUseFailure) | Searches `--error` with the failure's text and injects the top 5 matching memories (`memory-12 gotcha: <brief>`); nothing when none match. It helps; it never replaces your own search before diagnosing. |
-| `hooks/memory_recall.py --session [T-NNN…]` | Prints the three-line memory reminder and the current memories of the given tasks, or of every lane's task when none is given: used by the session-start status. |
-| `hooks/memory_check.py` on a Write, Edit or MultiEdit | Lints the memory bank right after a memory file is written and blocks with the findings, so a broken block is repaired at once. |
+| `hooks/memory_recall.py` on a failed tool call (`post-tool-failure`) | Searches `--error` with the failure's text and injects the top 5 matching memories (`memory-12 gotcha: <brief>`); nothing when none match. It helps; it never replaces your own search before diagnosing. |
+| `hooks/memory_recall.py --session [T-NNN…]` | Prints the three-line memory reminder and the current memories of the given tasks, or of every lane's task when none is given: used by the session-start status, and wired at a sub-agent's start where the runtime injects context there (it reads no event and prints plain text: the wiring passes it on as the context). |
+| `hooks/memory_check.py` on a file write (`post-tool` of a `file-write`) | Lints the memory bank right after a memory file is written and blocks with the findings, so a broken block is repaired at once. |
 Both hooks never fail the tool call (exit 0).

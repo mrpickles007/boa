@@ -22,9 +22,9 @@ memory-bank/03-IMPLEMENTATION-PLAN.md), between the lines
   refused, and a SPLIT parent never carries DONE (it is complete when its children are). "TODO; row pending T-002": the task row is added by that IN-FLIGHT lane (allowed until it lands).
 * Hot: `—` or a comma list of hotspots; tasks of the same wave that share one are serialised in one lane.
 
-Checks (any failure exits 1): unique IDs (in the block, one `| T-123 | M1 |` definition row and one ledger row per ID
-in the plan), valid cells, every dep known (not superseded), no cycle,
-every child under one parent only, every task row of the plan present in the block (or superseded),
+Checks (any failure exits 1): unique IDs (in the block, one definition row — `| T-123 | M1 |` or the template's
+`| T-123 | title | M1 |` — and one ledger row per ID in the plan), valid cells, every dep known (not superseded),
+no cycle, every child under one parent only, every task row of the plan present in the block (or superseded),
 every block task has a plan row (unless in flight or its row is pending an in-flight lane), DONE in the
 plan ⇔ DONE in the block, a DONE task depends on no open task, a SPLIT parent's plan row says "SPLIT into" and vice versa, a child keeps its parent's
 milestone and its plan row says "child N of <parent>" (new tasks only, so a split never changes progress (b)); with a
@@ -59,8 +59,10 @@ BEGIN, END = "<!-- plan-lanes:begin -->", "<!-- plan-lanes:end -->"
 SIZES = {"S": 1, "M": 2, "L": 3, "XL": 5}
 STATUSES = ("TODO", "IN-FLIGHT", "BLOCKED", "SPLIT")
 NONE = ("—", "-", "")
-# A task definition row (a table with an MS column): `| T-123 | M1 | scope | ...`.
-DEF_ROW = re.compile(r"^\| (?:\*\*|`)?(" + ID_RE + r")(?:\*\*|`)? \| M\d \|")
+# A task definition row (a table with an MS column, second or third: `| T-123 | M1 | scope | ...` or the plan
+# template's `| T-123 | title | M1 | ...`); group 2 is the template's title cell, so the milestone is the cell matched
+# (the template's shape first: a title that looks like a milestone stays the title).
+DEF_ROW = re.compile(r"^\| (?:\*\*|`)?(" + ID_RE + r")(?:\*\*|`)? \|( [^|]* \|)? M\d \|")
 LEDGER_HEAD = "### Status ledger"
 # A row of any task table outside the block: `| T-123 |`, `| **T-123** |` or `` | `T-123` | ``.
 PLAN_ROW = re.compile(r"^\| (?:\*\*|`)?(" + ID_RE + r")(?:\*\*|`)? \|")
@@ -335,7 +337,9 @@ def closing_summary(p: "Plan", closing: dict[str, str]) -> str:
 
 
 def duplicate_ids(outside: list[str]) -> list[str]:
-    """One definition row per task ID (`| T-123 | M1 | …`), one row per ID in the status ledger.
+    """One definition row per task ID (`| T-123 | M1 | …` or `| T-123 | title | M1 | …`), one row per ID in the
+    status ledger (a ledger row is never a definition, even with a milestone as its note). Two definition rows are
+    compared without their ID and milestone cells.
 
     Two lanes that pick the same new ID both add a definition row (and a ledger row); after the second merge the ID is
     defined twice. Older seed tables without an MS column and the §1 disposition table stay out: they are history.
@@ -348,15 +352,17 @@ def duplicate_ids(outside: list[str]) -> list[str]:
         if line.startswith("#"):
             in_ledger = line.startswith(LEDGER_HEAD)
         m = DEF_ROW.match(line)
-        if m:
-            defs.setdefault(m.group(1), []).append(cells(line)[2])
+        if m and not in_ledger:
+            c = cells(line)
+            ms = 2 if m.group(2) is not None else 1   # the milestone cell DEF_ROW matched
+            defs.setdefault(m.group(1), []).append(tuple(x for i, x in enumerate(c) if i not in (0, ms)))
         m = PLAN_ROW.match(line)
         if in_ledger and m:
             ledger[m.group(1)] = ledger.get(m.group(1), 0) + 1
-    for tid, scopes in sorted(defs.items(), key=lambda kv: TID(kv[0])):
-        if len(scopes) > 1:
-            kind = "with different scopes" if len(set(scopes)) > 1 else "with the same scope"
-            errors.append(f"{tid} is defined {len(scopes)} times {kind} (duplicate task ID: give the new task a free ID)")
+    for tid, rows in sorted(defs.items(), key=lambda kv: TID(kv[0])):
+        if len(rows) > 1:
+            kind = "with different rows" if len(set(rows)) > 1 else "with the same row"
+            errors.append(f"{tid} is defined {len(rows)} times {kind} (duplicate task ID: give the new task a free ID)")
     for tid, n in sorted(ledger.items(), key=lambda kv: TID(kv[0])):
         if n > 1:
             errors.append(f"{tid} has {n} rows in the status ledger (duplicate task ID, or append to the existing row)")
@@ -576,7 +582,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--plan", default=CONFIG["BOA_PLAN_FILE"])
     ap.add_argument("--check", action="store_true", help="validate only")
     a = ap.parse_args(argv)
+    import boa_tool
     try:
+        kind = boa_tool.special_kind(a.plan)   # one stat before the open: a FIFO never hangs the check
+        if kind is not None:
+            raise PlanError(f"{a.plan} is {kind}, not a regular file: not read")
         with open(a.plan, encoding="utf-8") as fh:
             tasks, superseded, closing, outside, errors = parse(fh.read())
     except (OSError, PlanError) as exc:

@@ -20,7 +20,8 @@ Your runtime has no skill loader, so also:
 - read <boa>/references/runtimes.md for your runtime first: it says which instructions file you read (AGENTS.md
   is the universal entry), how to register hooks and commands in your format, and what you cannot do;
 - the install puts the runtime-neutral sources in .boa/: agents in .boa/agents/, commands in .boa/commands/;
-  the hooks to register and the cleanup allowlist are in references/runtimes.md. Self-wire them in your runtime's own format (SKILL.md step 7): convert
+  the hooks to register and the cleanup allowlist are in references/runtimes.md. Self-wire them in your runtime's own format (SKILL.md step 7; every format checked in your runtime's latest
+  official documentation and the installed version, never from memory, SKILL.md step 1): convert
   the neutral headers of the agents (name, description, model tier, effort, tools) and the commands to your
   runtime's sub-agent and command format, and register the hooks in its configuration with its events mapped to
   BOA's neutral events, including the report capture (the sub-agent-stop hook saves each agent's final report to the
@@ -31,9 +32,16 @@ Your runtime has no skill loader, so also:
   cannot tell; record what you wired in the capabilities record and the handbook;
 - never claim a guard, hook or setting is active unless you verified it in your runtime;
 - set the models: your runtime's frontier model (BOA_MODEL_FRONTIER) and the one just below it (BOA_MODEL_MID),
-  from its current model list; ask me to confirm.
+  from its current model list, checked in its latest official documentation and the installed version, never from
+  memory; ask me to confirm.
 
 Rules while installing:
+- BOA already installed here (.boa/installed.list exists, or BOA's marked block is in AGENTS.md or .gitignore; a
+  .boa/config.env alone is an install to finish, SKILL.md steps 3 to 10, skipping what an earlier session already settled, then the bootstrap): follow SKILL.md step
+  1's routing instead of a new install (a fresh clone, .boa/commands/ or .boa/bin/ missing: run
+  sh <boa>/core/bin/boa install --target . --package <boa> first; a plan with tasks: never bootstrap it again,
+  whatever <mode> says; wire your runtime only, leaving any other runtime's wiring untouched, then resume-project
+  when the project is paused, else the run-project loop);
 - ask me only what your self-assessment, the environment check and the documents cannot decide, each question with
   options and your recommendation first;
 - never install system packages, change shared services or write my user-level settings without my yes; if one

@@ -50,7 +50,13 @@ def capture(ev: hc.Event, env: bt.Env) -> hc.Verdict:
     v = hc.Verdict()
     lead = env.path(env["BOA_LEAD_DIR"])
     flag = os.path.join(lead, "PAUSE")
-    if ev.kind != "subagent-stop" or not os.path.isfile(flag):
+    if ev.kind != "subagent-stop":
+        return v
+    paused, kind = bt.pause_state(flag)   # never opened unless a regular file: a FIFO would hang the stop
+    if not paused:
+        return v
+    if kind:
+        v.message = f"BOA pause: the pause flag {flag} is {kind}, not read: the pause capture was skipped"
         return v
     aid, atype = lj.ident(ev.agent_id), lj.ident(ev.agent_type)
     if not atype:
@@ -68,10 +74,14 @@ def capture(ev: hc.Event, env: bt.Env) -> hc.Verdict:
         try:
             if not os.path.isfile(resume) or os.path.islink(resume):
                 raise OSError("no resume file")
+            bt.check_replaceable(copy)   # the copy is renamed into place: never onto a device, a FIFO or a directory
             shutil.copyfile(resume, copy + ".tmp", follow_symlinks=False)
             os.chmod(copy + ".tmp", 0o600)
             os.replace(copy + ".tmp", copy)
             status = f"paused (resume file copied to lanes/{task}-{atype}.md)"
+        except bt.NotRegularFile as exc:
+            status = "paused, resume file NOT copied: " + str(exc).replace(os.sep, "/")   # `/` on every OS
+            v.message = f"BOA pause: the resume file of {atype} of {task} was not copied ({exc}): fix the lanes path"
         except OSError:
             status = f"paused, NO resume file at {resume.replace(os.sep, '/')}"   # `/` on every OS, as the journal text
             v.message = (f"BOA pause: {atype} of {task} stopped without a resume file ({resume}): ask it to write one "

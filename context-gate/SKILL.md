@@ -39,9 +39,12 @@ summary (a summary of summaries) plus L0 on disk, read at the lines you need.
 
 ## Invariants
 
-1. **Probe, never recall.** Verify every capability in the installed runtime version (docs, `--version`, the
-   running binary) and record the evidence in `.context-gate/config.json` -> `probe`. Nothing in the runtime table
-   below is a claim about a version you have not checked: **verify at install**.
+1. **Probe, never recall.** Verify every capability against the runtime's latest official documentation and the
+   installed version (`--version`, `--help`, the settings schema, the running binary, a harmless trial), at install
+   and at every re-wire or update, never from memory, and record the evidence (what was checked, where, when) in
+   `.context-gate/config.json` -> `probe`. Nothing in the runtime table below is a claim about a version you have not
+   checked: a date or version written there is a past check, never a reason to skip one. When the installed version
+   is older than the documentation, follow the installed version's behaviour and tell the user an update exists.
 2. **Snapshot before the compaction, never async.** L0 is written with tmp -> fsync -> rename, appended per
    session, never written over; a rewritten or rotated source opens a new L0 file.
 3. **stdout of the hook = the extension text only** (light) or nothing (l0-only). No JSON, no logs (diagnostics go
@@ -85,6 +88,8 @@ prove or choose `l0-only`. (a) yes and (b) no -> `l0-only`. (a) no -> not applic
    - `config.json` - copy of `assets/config.json` (light) or `assets/config.l0-only.json`, with `agent` and `probe`
      (including `extension_cap_chars`) filled from step 1;
    - `.gitignore` - copy of `assets/gitignore.txt`.
+   - `LICENSE` - copy of this skill's `LICENSE` (byte-identical): the MIT notice travels with the copy; keep it beside
+     the skill's own copy too.
 3. **Wire ONE hook**: the pre-compaction event, with no trigger filter, timeout >= 60 s, command
    `<project>/.context-gate/hooks/precompact.sh`. Claude Code, project `.claude/settings.json`:
    `"PreCompact": [{"hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.context-gate/hooks/precompact.sh",

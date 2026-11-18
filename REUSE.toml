@@ -1,7 +1,9 @@
 # Which licence covers which file (REUSE Specification 3.3, REUSE.toml version 1; https://reuse.software/spec-3.3/).
-# The last matching table wins: everything is AGPL-3.0-only, except what lands in a user's project (templates,
-# references, the context-gate skill, the stack plug-in template, the versioned memory-types config), which is MIT-0
-# (only the tool copies in .boa/ stay AGPL), and the logo: all rights reserved. The licence texts are in LICENSES/.
+# The last matching table wins: everything is AGPL-3.0-only (BOA's tools, hooks and CLI, SKILL.md; the tool copies in
+# a project's .boa/), except what lands in a user's project: the text (the references and the templates) is CC-BY-4.0,
+# the code (the context-gate skill with its Markdown, the generic stack plug-in, the memory-types and markers configs a
+# project versions) is MIT; and the logo: all rights reserved. The licence texts are in LICENSES/. The public
+# repository's code of conduct, the Contributor Covenant, is CC-BY-4.0 too.
 version = 1
 
 [[annotations]]
@@ -10,11 +12,21 @@ SPDX-FileCopyrightText = "2026 Giulio Alberello"
 SPDX-License-Identifier = "AGPL-3.0-only"
 
 [[annotations]]
-path = ["assets/**", "references/**", "context-gate/**", "stacks/generic/**", "core/memory-types.json"]
+path = ["assets/**", "references/**"]
 SPDX-FileCopyrightText = "2026 Giulio Alberello"
-SPDX-License-Identifier = "MIT-0"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+[[annotations]]
+path = ["context-gate/**", "stacks/generic/**", "core/memory-types.json", "core/markers.json"]
+SPDX-FileCopyrightText = "2026 Giulio Alberello"
+SPDX-License-Identifier = "MIT"
 
 [[annotations]]
 path = "docs/assets/logo.png"
 SPDX-FileCopyrightText = "2026 Giulio Alberello"
 SPDX-License-Identifier = "LicenseRef-AllRightsReserved"
+
+[[annotations]]
+path = "**/CODE_OF_CONDUCT.md"
+SPDX-FileCopyrightText = "Contributor Covenant contributors (https://www.contributor-covenant.org)"
+SPDX-License-Identifier = "CC-BY-4.0"

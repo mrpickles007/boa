@@ -22,18 +22,37 @@ slice line by line and reporting with `file:line` evidence (structure, data flow
 code, security-relevant paths, the contracts the code honours and what third-party clients depend on), the lead's
 consolidation into the memory bank (contracts marked "observed"), a coverage check that every file was read, and
 **characterisation goldens** that pin today's behaviour for every contract a user or a third party depends on.
-Behaviour is preserved unless a task authorises a change; a contract third parties rely on is never broken.
+Behaviour is preserved unless a task authorises a change; a contract third parties rely on is never broken. At
+install, a project that already keeps its own guard denial log sets `BOA_LOG_DIR` (a `.boa/<name>` directory of
+BOA's own, so the two logs never mix), and one that already has its own prefix for a logged guard override sets
+`BOA_ENV_PREFIX` to it. When
+`AGENTS.md` already held the project's own rules and BOA was installed in the pointer mode, the bootstrap also
+reconciles the two sets of rules ([below](#reconciling-the-rules-of-an-existing-agentsmd)).
 
 ## Refactor
 
 Input: an existing repository and the idea, the refactor's target: a file you name or the conversation (written into
-`IDEA.md` and confirmed by you, as in greenfield). The brownfield bootstrap runs first; then the
+`IDEA.md` and confirmed by you, as in greenfield). The brownfield bootstrap runs first (the rules reconciliation
+included); then the
 target is expressed as contract changes (each contract kept, changed or removed; every change and removal a decision
 record, the goldens of a changed behaviour re-recorded by that task only), and the plan keeps the goldens green at
 every merge. Behaviour is preserved, not the legacy shape: duplication, dead code and accidental complexity are not
 ported. An optional **clean-room** module covers refactoring code you may not copy (spec side and build side, an
 allowed-sources list, a provenance line on every task, a copy check in the gate); it mitigates legal risk and is not
 legal advice.
+
+## Reconciling the rules of an existing AGENTS.md
+
+An existing project often has an `AGENTS.md` with rules of its own. Installed with `BOA_AGENTS_BLOCK=pointer`
+([02](02-install-and-wiring.md#the-agentsmd-block-mode)), BOA's rules live in `docs/boa-rules.md` and `AGENTS.md`
+gets only a pointer block, which says that your rules win where the two conflict until the reconciliation is done.
+The reconciliation is a bootstrap task of the brownfield and refactor modes: the lead maps every rule of your
+`AGENTS.md` against BOA's in a table (BOA's rule, yours, how they relate, the decision, the reason) and decides each
+row: **adopt** BOA's rule (your text is changed to it), **adapt** it (one rule written for the project), or **keep**
+yours (BOA's rule does not apply here, with the reason). Rows that change how you work are asked to you, with
+alternatives and a recommendation. The table is a decision record in `memory-bank/06-DECISIONS.md`, and `AGENTS.md`
+no longer contradicts a BOA rule silently; a conflict found later becomes a new row. The method:
+[references/modes/brownfield.md](../references/modes/brownfield.md).
 
 ## Full specifications from any idea
 
@@ -63,7 +82,13 @@ is checked at every milestone and at close-out (rule OR-46).
 BOA is language-neutral: projects in any language; Python is only BOA's own runtime. Everything specific to the
 project's language lives in its **stack plug-in**, which the agent writes at bootstrap (the project-wiring item "stack
 plug-in"). BOA ships only the generic plug-in template, `stacks/generic/`, installed as `.boa/stack/`; from then on it
-is project code:
+is project code, versioned with the project (the installer's `.gitignore` block excepts `.boa/stack/` from BOA's
+ignored files and re-includes each shipped plug-in file by name, so a project rule such as `*.env` cannot hide it,
+while a file you add there follows your own ignore rules; the installer warns when one of your rules still ignores a
+versioned path, e.g. an ignored parent such as `/.boa/` or `.*`, so a fresh clone has the adapted plug-in): a re-install never overwrites a plug-in file the project
+adapted (reported `kept`, the template's new version waiting in `.boa/pending/.boa/stack/` for the agent to merge
+by hand), updates the files still as BOA installed them, and `boa uninstall` keeps the adapted files and removes the
+untouched ones:
 
 - **`plugin.env`**: assignments only, sourced in POSIX sh by the stack's tools and the project's gate.
   - `TEST_COMMANDS`: how the project's tests run, one `<glob>=<command>` per line; `{}` stands for the test file and

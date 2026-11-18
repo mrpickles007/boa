@@ -164,9 +164,13 @@ def from_utc(ts: object) -> int | None:
 def append_locked(path: str, text: str, wait: float = 3.0, dir_mode: int | None = None, file_mode: int = 0o600) -> None:
     """Append `text` to `path` under the file's lock (bounded wait; a sidecar `<path>.lock` where locks are mandatory,
     i.e. Windows, removed after the append when no other writer holds it open), setting the modes on every append (also
-    when the file or its directory already existed)."""
+    when the file or its directory already existed). A `path` that exists and is not a regular file is refused
+    (NotRegularFile, an OSError) before the open: appending to a FIFO would wait for a reader forever."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import boa_lock
+    kind = special_kind(path)
+    if kind is not None:
+        raise NotRegularFile(f"{path} is {kind}, not a regular file: not appended to")
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
     with open(path, "a", encoding="utf-8", newline="") as fh:
@@ -353,9 +357,9 @@ def replace_generated(text: str, begin: str, end: str, body: str) -> str:
     lines = text.split("\n")
     while i < len(lines):
         out.append(lines[i])
-        if lines[i].strip() == begin:
+        if lines[i].lstrip("\ufeff").strip() == begin:   # a byte-order mark before the marker is not part of it
             j = i + 1
-            while j < len(lines) and lines[j].strip() != end:
+            while j < len(lines) and lines[j].lstrip("\ufeff").strip() != end:
                 j += 1
             if j == len(lines):
                 raise ValueError(f"a '{begin}' line without its '{end}' line")
@@ -374,10 +378,56 @@ def toplevel(path: str) -> str:
     return top or os.path.realpath(d)
 
 
+class NotRegularFile(OSError):
+    """An atomic write refused: its target exists and is not a regular file (check_replaceable)."""
+
+
+special_kind = boa_config.special_kind   # the one stat-first check (in the config reader, which needs it too)
+
+
+def pause_state(flag: str) -> tuple[bool, str | None]:
+    """(paused, what stands there) of the pause flag, never opened: nothing there is not paused; a regular file is
+    paused (None: read it); anything else is paused too, the safe side, with its kind — a dangling symbolic link
+    included (a FIFO would hang a reader, a directory cannot be read)."""
+    if not os.path.lexists(flag):
+        return False, None
+    if os.path.isfile(flag):
+        return True, None
+    if os.path.islink(flag) and not os.path.exists(flag):
+        return True, "a dangling symbolic link"
+    try:
+        kind = special_kind(flag)
+    except OSError:
+        kind = None
+    return True, kind or "not a regular file"
+
+
+def pause_removal(kind: str) -> str:
+    """How what stands at the pause flag's path (pause_state's kind) goes away: `pause-flag clear` removes a link, a
+    FIFO, a device node or a socket, never a directory (it may hold anything: removed by hand)."""
+    return "by hand" if kind == "a directory" else "pause-flag clear"
+
+
+def check_replaceable(path: str) -> None:
+    """Raise NotRegularFile when `path` exists and is not a regular file: a character or block device, a FIFO, a
+    socket or a directory (a symbolic link is judged by what it points to). An atomic write renames a temp file onto
+    its target, which replaces the target ITSELF: a device given as an output path would become a plain file. A
+    missing path (a new file) and a regular file pass. Every atomic writer that can be pointed at a caller-given or
+    existing path calls it before its temp file exists (so none is left beside a device either); a check against
+    accidents, not a race-free one."""
+    kind = special_kind(path)
+    if kind is None:
+        return
+    raise NotRegularFile(f"{path} is {kind}, not a regular file: not replaced (an atomic write would make it a "
+                         "regular file; name a new file or a regular one)")
+
+
 def write_atomic(path: str, text: str) -> None:
     """Replace a file's content all at once: a temp file beside it (the file's own mode kept), then os.replace; an
-    interruption leaves the old file whole and no temp file behind."""
+    interruption leaves the old file whole and no temp file behind. A target that exists and is not a regular file is
+    refused (NotRegularFile, an OSError: check_replaceable)."""
     import tempfile
+    check_replaceable(path)
     tmp = None
     try:
         with held_stop_signals():   # the name is recorded before a stop can land (the finally below)
@@ -408,6 +458,7 @@ def _selftest() -> int:
     assert re.match(branch_re("m<ms>/<task>-<slug>", "T-001"), "m1/T-001-ab-c")
     assert from_utc("2026-11-02T10:00:00Z") == 1793613600 and from_utc("x") is None and utc(1793613600) == "2026-11-02T10:00:00Z"
     assert replace_generated("a\n<b>\nold\n<e>\nz", "<b>", "<e>", "new\n") == "a\n<b>\nnew\n<e>\nz"
+    assert replace_generated("\ufeff<b>\nold\n<e>", "<b>", "<e>", "new") == "\ufeff<b>\nnew\n<e>"
     print("boa_tool selftest: ok")
     return 0
 

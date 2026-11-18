@@ -1,7 +1,7 @@
 # 08-OWNER-RULES.md — every binding rule of {{BOA_PROJECT_NAME}}
 
 > **Binding** (AGENTS.md §3). Read at every session start, by the lead and by every sub-agent. This file is the
-> complete **index** of the owner's rules: the rules pool adopted at install (OR-01…OR-72, proven in practice and
+> complete **index** of the owner's rules: the rules pool adopted at install (OR-01…OR-74, proven in practice and
 > worded for any project) plus the owner's own rules, added during the project.
 >
 > **How a new rule gets here** (09 §16): the owner says it in chat → the lead writes it at once into
@@ -25,7 +25,7 @@ memory).
 
 | Source | Rule(s) |
 |---|---|
-| BOA rules pool, adopted at install ({{BOA_INSTALL_DATE}}) | OR-01 … OR-72 |
+| BOA rules pool, adopted at install ({{BOA_INSTALL_DATE}}) | OR-01 … OR-74 |
 
 <!-- rules-pool:begin -->
 ## Process rules (how the work is done)
@@ -143,7 +143,7 @@ memory).
 - Rule: agents clean up only with the allowlisted shapes (literal absolute paths under the scratch root or the
   worktrees dir, one deletion per command, no `cd && rm`, no variable paths, no globs outside those roots; worktree
   remove/prune, lane branch deletion, lane container/network/volume removal, the project's residue check). Anything else
-  prompts on purpose. The PreToolUse guard denies destructive commands on things not provably ours (non-blocking:
+  prompts on purpose. The pre-tool guard denies destructive commands on things not provably ours (non-blocking:
   the agent reads the reason and adapts).
 - Why: in an autonomous run, a permission prompt nobody answers stalls the lane for hours.
 - How to apply: write each run into a fresh `mktemp -d` dir under your own scratch subdir and remove the whole
@@ -201,13 +201,16 @@ memory).
   re-tests, tester confirmations) the lead RESUMES that same agent by its id (a message to it, its context intact).
   A new task or a genuinely new piece of work gets a NEW agent. A train's integrator is resumed for the same train
   (re-stack, re-gate) and new for a new train. When the agent or the session is lost, a new agent of the same role
-  is briefed from the lane's `.lane-resume/<role>.md`, the newest journal entry and the lead's notes since.
+  is briefed from the lane's `.lane-resume/<role>.md`, the newest journal entry and the lead's notes since. Resuming
+  holds while the agent's context is moderate and the next round follows soon; when its context has grown large,
+  rounds have piled up or the cache has surely expired, a fresh agent of the same role is briefed instead (09 §5.3
+  says when).
 - Why: a resumed agent reuses its context and prompt cache (rounds cost far less) and keeps its knowledge of the lane
   (the reviewer remembers its own findings, the builder its design); a fresh agent per round pays the whole context
-  again and loses what the lane taught it.
+  again and loses what the lane taught it, until the context outgrows what a re-brief costs (09 §5.3).
 - How to apply: the agents registry (the project's clock, project-wiring "usage clock and throughput") names the
   agent to resume; resume it the way the
-  runtime allows (verified at install and recorded in the capabilities record; the runtime profiles are in the BOA
+  runtime allows (verified at every wiring, OR-63, and recorded in the capabilities record; the runtime profiles are in the BOA
   package's `references/runtimes.md`) and, where it cannot be resumed, brief a new agent from the resume file.
 - Applies to: lead.
 - Enforced: 09 §1, §3 and §5, the lead registry, AGENTS.md §6.
@@ -218,7 +221,7 @@ memory).
 - Why: agents keep working while the lead is stalled; their results sit unread otherwise.
 - How to apply: `lead-status.sh` shows each lane's newest journal verdict and the suggested next step.
 - Applies to: lead.
-- Enforced: 09 §1 and §13, the SubagentStop journal hook.
+- Enforced: 09 §1 and §13, the sub-agent stop journal hook.
 
 ### OR-18 — Hand over machine-local state before merging a lane that holds it
 - Rule: before merging a lane whose worktree holds gitignored state that must survive (a running instance's
@@ -231,7 +234,7 @@ memory).
 
 ### OR-19 — Live lane state lives in the lead dir, never in a session
 - Rule: the lead's live lane registry is `{{BOA_LEAD_DIR}}/lanes.md` (machine-local, git-excluded), append-only, one
-  timestamped line per stage change. The session scratchpad dies with the session and holds nothing durable.
+  timestamped line per stage change. The session's scratch directory dies with the session and holds nothing durable.
   Durable rules never go in the lead dir: they live in AGENTS.md and `memory-bank/`.
 - Why: a new lead session (or another agent) must know where every lane stands without the old session.
 - How to apply: 09 §2.
@@ -259,7 +262,7 @@ memory).
 
 ### OR-21 — Everything stays current; any agent can take over at any moment
 - Rule: the rules and the workflow live in the repository (08, 09, AGENTS.md, the agent definitions, the
-  handbook); live state is recorded automatically and continuously: the SubagentStop hook journals every agent's
+  handbook); live state is recorded automatically and continuously: the sub-agent stop hook journals every agent's
   final report, the lead appends every stage change to the registry, `lead-status.sh` shows everything on one screen
   and is injected at every session start, pending owner rules wait at most one train, active-context is refreshed at
   every train, RESUME.md is a pointer file that holds no state. On a pause every agent writes its resume file.
@@ -281,7 +284,8 @@ memory).
 - Rule: where an OS sandbox would block autonomous operation, there is none and the guard hooks are the only
   layer: a best-effort net, improved only for common-shape bypasses or false positives that hit real lanes, with
   the rest documented as known limits. When filling lanes, product tasks come first; a tooling task runs when it
-  unblocks product work or is planned like a product task.
+  unblocks product work, when it measurably speeds up product work (for example a gate or a suite made faster, or a
+  runner wired), or when it is planned like a product task; otherwise product tasks fill the lanes first.
 - Why: unbounded guard work and tooling rounds eat the budget meant for the product.
 - How to apply: 09 §3 and §11; known limits listed in 09 §11 and the handbook §7.
 - Applies to: lead, all.
@@ -402,8 +406,8 @@ memory).
 ### OR-32 — With a remote test runner, heavy runs never execute locally
 - Rule: when a remote runner is configured (`BOA_RUNNER=on`), heavy runs (gate steps that run tests, mutation, whole
   test suites, container and database suites) run only there, through the project's runner command
-  (project-wiring "remote runners"). A runner that is not configured or not reachable means STOP and report to the lead, never a local
-  fallback. Locally: the light doc and lint suites, static reads, and targeted tests on explicitly named files.
+  (project-wiring "remote runners"). With the runner on, its command not configured on this machine or not reachable
+  means STOP and report to the lead, never a local fallback; with the runner off, heavy runs stay local. Locally: the light doc and lint suites, static reads, and targeted tests on explicitly named files.
   Without a runner, heavy runs stay local, with the parallelism the project's test-execution decision sets
   (project-wiring "light and heavy suites").
 - Why: heavy runs on a shared development host starve every lane and the other projects on it.
@@ -458,7 +462,7 @@ memory).
   (references/runtimes.md); the main
   conversation's TTL changes only with the user's agreement (a longer TTL costs more per cache write). The setting
   names, values and defaults are facts of the runtime: its profile in the BOA package's `references/runtimes.md`
-  (verify at install, names and values change).
+  (verify at every wiring, OR-63: names and values change).
   Where the agent may not set them, the lead tells the owner exactly what to change and why.
 - Why: sub-agents wait on long test runs, so a short cache expires between their turns and every turn pays the
   whole context again; a longer cache write costs more once and saves far more over a lane.
@@ -473,7 +477,7 @@ memory).
 - Rule: a sub-agent writes only in its own lane worktree, its own scratch subdir (`<scratch root>/<task>-<role>/`)
   and its task's throwaway resources (name `{{BOA_NAME_PREFIX}}<task>-*`, label `{{BOA_LABEL_KEY}}=<task>`). It never
   touches another lane: the guard binds each sub-agent to the first task id (`T-NNN`) of its spawn
-  description, so **every Agent description starts with the lane's task id**. Only the integrator may act on any
+  description, so **every sub-agent spawn's description starts with the lane's task id**. Only the integrator may act on any
   lane.
 - Why: parallel lanes share a host and a repository; one agent cleaning "its" files in another lane destroys work.
 - How to apply: briefs name the worktree, the scratch subdir and the task id first.
@@ -644,7 +648,7 @@ memory).
   --format-only`, which may carry `supersedes="memory-N"` (an existing final id) or `supersedes-brief="<brief>"`
   (another new block of the same lane or batch); the fold's `memory_write.py --ingest` resolves them and stamps both
   directions atomically. The id ledger `memory-bank/.memory-ids.jsonl`, written only by the tool, makes a
-  hand-written id fail the lint, the PostToolUse hook and the pre-commit.
+  hand-written id fail the lint, the post-tool hook and the pre-commit.
   Supersession chains are always coherent: a memory is superseded at most ONCE (a single `superseded-by`); to
   replace a memory that is already superseded, supersede the CURRENT head of its chain (`memory_search.py --chain
   <id>` shows it); one memory may supersede several current memories (a merge); two memories superseding the same
@@ -664,8 +668,8 @@ memory).
   keeps the history that explains today's state.
 - How to apply: `.boa/tools/memory_write.py` writes; `.boa/tools/memory_lint.py` validates (fields, datetime format,
   type, ids unique and progressive, links agree both ways, no cycles) and runs on every commit (`pre-commit`,
-  `--staged`, refusing broken links); the PostToolUse hook `.boa/hooks/memory_check.py` lints a memory file after every
-  Write or Edit; `.boa/tools/memory_types.py` validates the types configuration and renders the doc tables;
+  `--staged`, refusing broken links); the post-tool hook `.boa/hooks/memory_check.py` lints a memory file after every
+  file write; `.boa/tools/memory_types.py` validates the types configuration and renders the doc tables;
   `.boa/tools/memory_search.py` finds memories; the session-start status carries a three-line memory-writing
   reminder. The type table: the BOA package's
   `references/memory-types.md`, summarised in `memory-bank/README.md`.
@@ -684,10 +688,12 @@ memory).
 - Why: a memory nobody reads is a cost with no return; the same gotcha hit twice by two lanes is the failure the
   memory exists to prevent, and citations show which memories earn their keep.
 - How to apply: AGENTS.md §14 (the table), every agent contract ("Memory recall" section), 09 §27; wired support: the
-  PostToolUseFailure hook `.boa/hooks/memory_recall.py` injects matching gotcha/trap/lesson ids after a failed tool
-  call (where the runtime has that event; verified at install); the session-start status prints the current memories for every
-  active task id; a sub-agent gets its task's memories through its brief ("memories to know", 09 §4; a SubagentStart
-  injection only where the runtime supports it, verified at install).
+  post-tool-failure hook `.boa/hooks/memory_recall.py` injects matching gotcha/trap/lesson ids after a failed tool
+  call (where the runtime has that event; verified at every wiring, OR-63); the session-start status prints the current memories for every
+  active task id; a sub-agent gets its own task's memories through its brief ("memories to know", 09 §4); at a
+  sub-agent's start, only where the runtime injects context there (verified at every wiring, OR-63),
+  `memory_recall.py --session` adds the reminder and every active lane's memories; a decision, planning, a contract
+  change, an update and the close-out are discipline only (AGENTS.md §14).
 - Applies to: all.
 - Enforced: every agent contract (recall step, citation in the report), the reviewer (a report that ignores a memory
   it should have followed is a finding), `memory_recall.py`.
@@ -700,12 +706,19 @@ memory).
   fault-catching test, an unmet acceptance criterion) or NON-BLOCKING (naming, wording, docs, comments, cosmetic UI
   within the quality rules, hardening against unreachable input, simplification, a nice-to-have test), with a
   reason; the lead may re-class. A lane leaves review after a round with no findings, or after two consecutive
-  rounds with no blocking finding; the second round is needed only if code changed after the first. Open
-  non-blocking findings are fixed in the same round or relocated to a named task (a dated note on its row or the
-  area batch task, OR-25) before the lane leaves review; never lost, never holding the lane.
+  rounds with no blocking finding; the second round is needed only if code changed after the first. Before the
+  lane leaves review, each open non-blocking finding is fixed in the same round when it is SMALL, and relocated to a
+  named task (a dated note on its row or the area batch task, OR-25) only when it is LARGE; never lost, never holding
+  the lane. SMALL: inside the lane's own task (its files and its requirement) and needing no decision not yet taken,
+  whatever the size of the edit (wording, docs, comments, a rename, a one-line or local fix, test data, a missing
+  test for a line the lane changed, a hardening of the lane's own code). LARGE: it needs a spec or owner decision
+  not yet taken (asked first), belongs to another task's or lane's scope or depends on a task not yet landed, or is
+  new scope (a new feature, requirement, tool or suite). The fix goes to the builder tier OR-34 picks: `builder-mid`
+  for docs or comment-only fixes, wording, a rename, a one-line fix, test data and mechanical follow-ups; `builder`
+  for a delicate path or non-trivial code; when in doubt, `builder`.
 - Why: a "zero findings" loop once ran seven rounds of one to three minor findings each.
-- How to apply: the reviewer writes `[BLOCKING|NON-BLOCKING] file:line — what — failure scenario — fix — reason`;
-  re-reviews are delta reviews; the lead records the round and the class counts in the registry.
+- How to apply: the reviewer writes `[BLOCKING|NON-BLOCKING] [SMALL|LARGE] file:line — what — failure scenario — fix —
+  reason` (SMALL or LARGE on a non-blocking finding only); re-reviews are delta reviews; the lead records the round and the class counts in the registry.
 - Applies to: reviewer, lead, builder.
 - Enforced: the reviewer contract, 09 §5 and §6.
 
@@ -736,13 +749,21 @@ memory).
 ### OR-55 — Plants run only the covering cases, in parallel
 - Rule: a planted fault runs only the test cases that cover the planted line (every suite, any kind: the suite's
   case filter or the framework's own filter), and counts as caught only when a covering case fails for the planted
-  reason. Independent plants run in parallel, each in its own scratch copy of the worktree, up to the lane cap. The
-  whole suite runs once at the start and once at the end, never per plant. Builders and reviewers run only the cases
-  they touch.
+  reason or its run times out while a covering case is running (killed by timeout, see How to apply). Independent plants run in parallel, each in its
+  own scratch copy of the worktree, up to the lane cap. The whole suite runs once at the start and once at the end,
+  never per plant. Builders and reviewers run only the cases they touch.
 - Why: whole-suite plants run one after another once made a single tester stage last hours; a plant round should
   cost about its slowest covering cases.
-- How to apply: every copy has a green unplanted baseline (else a crash is a false kill); the verdict has three
-  states (a failing case, a crash, clean); a killing test asserts the specific effect.
+- How to apply: every copy has a green clean baseline run (else a crash is a false kill); the verdict has four
+  states: a failing case, a crash, clean, and a run that times out while a covering case is running; the fourth counts
+  as killed by timeout, recorded as such, provided the clean baseline run finished inside the bound and the timeout
+  is confirmed by a replay alone, unless the first run already ran alone (no other run active at any time during
+  it): a replay of the plant alone, under the same timeout, times out too, while a replay that ends gives its own
+  verdict; a timeout outside every covering case, before the first one or in code no case gates, is confirmed the
+  same way and is invalid, like a failure there; when the cap clipped the bound (the timeout derived from the clean
+  baseline run is above the cap), a confirmed timeout is skipped, never killed or invalid: raise the cap; a plant whose
+  clean baseline run is already over the bound is skipped (not run): raise the bound within the cap or narrow the cases,
+  as for a mutant; a killing test asserts the specific effect.
 - Applies to: tester (builder and reviewer for their own runs).
 - Enforced: the tester contract, every suite's case filter.
 
@@ -830,10 +851,18 @@ memory).
   every substitute and every part it cannot provide (never fakes one), and asks the user what it cannot determine
   (OR-12): owner topics, mutation testing, CI, runners, models, protections. The result is recorded (capabilities
   record and decision entries) and re-checked when the runtime changes.
+  Every adaptation to the runtime checks the runtime's latest official documentation and the installed version
+  (its help, its settings schema, a harmless trial), every time and never from memory: wiring or re-wiring hooks and
+  their events and fields, sub-agents and their header (model names and aliases, effort, tools), commands, settings
+  keys, permission modes, the context-gate profile, the protected-command rules, the runtime part of an update. Record
+  what was checked, where and when. When the installed version is older than the documentation, follow the installed
+  version's behaviour and tell the user an update exists. Dates and versions in BOA's runtime profiles are evidence
+  of a past check, never permission to skip one.
 - Why: a discipline written for one runtime silently breaks on another; a faked capability is worse than a declared
-  gap.
-- How to apply: the skill's first step; the lead re-runs it after a runtime update.
-- Applies to: lead.
+  gap; runtimes change between versions, and a fact remembered or copied from an older check is wrong without a sign.
+- How to apply: the skill's first step; the lead re-runs it after a runtime update; every wiring or re-wiring
+  step starts with the check.
+- Applies to: lead, and any agent that adapts something to the runtime.
 - Enforced: the capabilities record, 09 §1.
 
 ### OR-64 — Project specifics are wired by the agent; measuring is periodic tooling work
@@ -902,16 +931,17 @@ memory).
 - Rule: BOA is a tool the agent uses, never part of the product. Its files, tests, logs, tasks and tooling are never
   mixed with the project's own, and nothing of BOA goes into the product or its releases. `.boa/` is git-ignored
   (`/.boa/*`) and reinstalled with `boa install`, except the files the agent writes for the project there
-  (`.boa/config.env`, `.boa/protected-commands.conf`, `.boa/memory-types.json`). What the agent writes FOR the
+  (`.boa/config.env`, `.boa/protected-commands.conf`, `.boa/memory-types.json`, `.boa/markers.json`, the stack plug-in
+  `.boa/stack/` it adapts). What the agent writes FOR the
   project (those files, the memory bank, the plan, the specs, the handbook, AGENTS.md) is project knowledge and
   stays versioned in the repository.
 - Why: a product that carries the tool that built it ships foreign files, and a plan or test suite that mixes the
   tool's work with the product's hides what the product really needs.
-- How to apply: never add a `.boa/` path other than those three files to a commit, and none to a package or a release; BOA's own tests, logs and tasks stay
+- How to apply: never add a `.boa/` path other than those four files and `.boa/stack/` to a commit, and none to a package or a release; BOA's own tests, logs and tasks stay
   out of the project's suites, plan and reports; when `.boa/` is lost or stale, reinstall it with `boa install`.
 - Applies to: all.
-- Enforced: the installer's `.gitignore` block (`/.boa/*` ignored, the three project files kept), AGENTS.md, the
-  handbook.
+- Enforced: the installer's `.gitignore` block (`/.boa/*` ignored, the project files and `.boa/stack/` kept),
+  AGENTS.md, the handbook.
 
 ### OR-69 — An existing project: every new feature and change goes through the full flow
 - Rule: when BOA is added to a project that already exists (brownfield or refactor), every new feature and every
@@ -950,7 +980,9 @@ memory).
   Windows, GPU) only on manual dispatch or release, cancel-in-progress on PRs, path filters so docs-only changes skip
   CI, a job that decides which jobs a change needs, each job printing its minutes. After the first run the billed
   minutes are measured; when the budget is at risk the workflow is disabled until the triggers are fixed; the full
-  matrix is never re-run to check a docs change.
+  matrix is never re-run to check a docs change. A manual dispatch of the expensive runners takes a suite filter
+  (validated against the project's suite names, never interpolated into the shell), so a re-run after a small fix
+  runs only the touched suites; the full matrix runs once, at the end (before a release).
 - Why: hosted minutes cost money, an expensive runner multiplies the cost, and a budget burned by an automatic
   trigger is found only when the bill arrives.
 - How to apply: the CI task follows `references/forge.md` (the visibility question, the minutes economy) and the CI
@@ -969,6 +1001,42 @@ memory).
   side at every train; the reviewer checks the rest.
 - Applies to: builder, tester, reviewer.
 - Enforced: the duration review (OR-20, 09 §15) and the reviewer (a bloated or duplicated suite is a finding).
+
+### OR-73 — Every surface that leaves the machine is checked like a file
+- Rule: commit messages, branch and tag names, PR/MR titles and bodies and release notes are checked against the same
+  content rules as a file: the secret scanner's rules (OR-41), the project's forbidden names or terms, the product
+  language (OR-65), the required and forbidden trailers (OR-42). A tool checks it wherever the project has one (the
+  `commit-msg` hook, a pre-push or server-side rule for branch and tag names, the forge's push rules); by hand only
+  where none exists, and the gap is recorded.
+- Why: the checks on files leave the text that travels beside them unguarded: a secret, a forbidden name, a message in
+  the wrong language or a forbidden trailer in a commit message or a PR body reaches the history and the forge as
+  surely as one in a file.
+- How to apply: the `commit-msg` hook and the close-out scan run the content rules on the message text (project-wiring
+  "git hooks" and "secret scanning"); the builder checks its own commit messages and branch name, the integrator the
+  squash or merge message, the PR/MR title and body and the release notes, the reviewer the commit messages and the
+  branch name as part of the diff.
+- Applies to: all.
+- Enforced: the `commit-msg` hook and the branch and tag name check, the close-out scan, the integrator and the
+  reviewer.
+
+### OR-74 — The project's user documentation is kept current in the same change
+- Rule: a change that alters what a user of the project sees (a behaviour, a command, a flag, a config key, an API, an
+  error message) updates the project's user documentation (README, guides, API reference, changelog) in the same
+  change; otherwise the task is not done. The project decides which files are its user documentation; the default the
+  agent proposes at bootstrap is the README plus `docs/`, minus the files BOA installs there (`docs/agent-handbook.md`,
+  `docs/boa-notice.md`, `docs/boa-rules.md`, `docs/parity/` and, in a clean-room project, `docs/clean-room.md`; `docs/api/`
+  and `docs/specs/` are user documentation unless the project decides otherwise); the project confirms or changes it, and the result is recorded in the
+  handbook's file map. Before every release or milestone
+  closure a docs sweep task checks every user chapter against what landed, and the release notes follow OR-73.
+- Why: documentation that lags the product misleads the users it is written for; the agent handbook rule (OR-26)
+  keeps the agents' map current, and nothing else keeps the users' one.
+- How to apply: the builder updates the user documentation with the change; the reviewer flags a user-visible change
+  without its documentation update (severity major, blocks, as for the handbook, OR-26); the lead plans the docs sweep
+  as a task before each release or milestone closure (09 §14); the handbook's file map names the user documentation; a
+  docs-only fix of a review finding is verified by the tester against the finding, and the reviewer's exit counts it
+  resolved.
+- Applies to: all.
+- Enforced: the builder and reviewer contracts, 09 §14 and §16, the docs sweep task.
 
 <!-- rules-pool:end -->
 

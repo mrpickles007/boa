@@ -13,6 +13,7 @@ runtime copy (`.context-gate/`) can be installed from the skill copy alone.
 | Source | Targets | Rule |
 |---|---|---|
 | `context-gate/SKILL.md` | `.claude/skills/context-gate/SKILL.md` | Claude Code; another runtime: wherever its skills live |
+| `context-gate/LICENSE` | `.claude/skills/context-gate/LICENSE`, `.context-gate/LICENSE` | byte-identical: the MIT notice travels with each copy (another runtime: beside its SKILL.md copy) |
 | `context-gate/scripts/gate_core.py` | `.claude/skills/context-gate/scripts/gate_core.py`, `.context-gate/scripts/gate_core.py` | byte-identical (`cmp`) |
 | `context-gate/hooks/precompact.sh` | `.claude/skills/context-gate/hooks/precompact.sh`, `.context-gate/hooks/precompact.sh` | keep the executable bit |
 | `context-gate/assets/precedence-block.txt` | `.claude/skills/context-gate/assets/precedence-block.txt`, `.context-gate/prompts/precedence-block.txt` | byte-identical; never rendered or reflowed |

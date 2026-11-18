@@ -37,17 +37,19 @@ What it checks:
   '..', the scratch root, protected dirs and symlinks resolving elsewhere are refused; a recursive deleter's start
   (find -delete/-exec rm, rsync --delete) that holds a protected path is judged like rm -rf of that start; a find
   that deletes while following symlinks (-L, -H, -follow) is refused;
-- sub-agent writes (Bash redirections, mv, cp, tee, ln, install, rsync, sed -i, dd of=; and the Write/Edit tools)
+- sub-agent writes (shell redirections, mv, cp, tee, ln, install, rsync, sed -i, dd of=; and the file-write tools)
   only in their own lane worktree, the scratch root, /tmp/<BOA_NAME_PREFIX>*, and the main checkout's
-  BOA_SUBAGENT_MAIN_WRITES prefixes (logs/); everyone's Bash writes to <main>/.boa/, <main>/.env* and the agent
+  BOA_SUBAGENT_MAIN_WRITES prefixes (logs/); everyone's shell writes to <main>/.boa/, <main>/.env* and the agent
   runtime's own configuration in <main> (BOA_RUNTIME_CONFIG) are refused (the lead uses its file tools or the
-  override);
+  override). Limits of that protection of the runtime's configuration: shell writes and deletions of those top-level
+  names in the main checkout only; git verbs that change them (checkout, restore, rm, ...: only an output file a git
+  verb writes is checked), the same names in a lane worktree and the lead's file tools are not judged;
 - own lane: a sub-agent is bound to the first <BOA_TASK_PREFIX><n> id of its spawn description (the agent binding,
   agent_binding.py, recorded when the lead spawned it); another lane's worktree is refused ("that is lane X, yours
   is Y"), the integrator may touch any lane, an unbound agent stays confined to the lane worktrees and its
   destructive commands there are noted in the log (the binding's known limits are in agent_binding.py);
 - other projects on this host: a sub-agent may not name a path under the projects dir (the main checkout's
-  parent) other than the project's own (reads included, also relative to its cwd, and with Read/Grep/Glob, which
+  parent) other than the project's own (reads included, also relative to its cwd, and with the file-read tools, which
   may not search the projects dir or anything above it either) nor cd into one; nobody runs git write verbs on
   another project's repository;
 - ln/mv/install/rsync/cp --remove-destination onto /dev, chmod/chown/chgrp/setfacl/chattr on /dev, mount/umount
@@ -79,9 +81,40 @@ prefix is only an environment assignment and the command is judged normally. The
 when the guard fails (fail closed, see Limits). Python standard library only.
 
 Paths and names come from hook_config.py (the project's .boa/config.env; `--print-paths` shows the
-paths): REPO the main checkout, WT the lane worktrees dir, SCRATCH the agents' scratch root (BOA_SCRATCH_ROOT), the
+paths): REPO the main checkout, WT the lane worktrees dir, SCRATCH the agents' scratch root (BOA_SCRATCH_ROOT),
+SCRATCH_GLOB the layout of its task entries (BOA_SCRATCH_GLOB: every level above an entry is shared, never deleted), the
 projects dir = REPO's parent, RUNTIME_CONFIG the runtime's own configuration names in REPO (BOA_RUNTIME_CONFIG).
+A sub-agent's metadata changes (chmod, chown, chgrp, touch, setfacl, chattr: modes, owners, times, attributes) are
+writes to their targets and are confined like any write (`chmod -x` of a git hook turns the hook off); its own lane
+root is no write target either (`chmod 755 .` or `touch .` there is refused). A sub-agent's writer, metadata changer
+(WRITERS, METADATA_OPTS) or git under find -exec/-execdir/-ok/-okdir is judged as that program with {} a file inside
+each start, and under xargs is refused (the names come from stdin). In the scratch root a sub-agent deletes only
+inside a task entry: a component at or below the layout's entry level named <own task>-… (an integrator or an unbound
+agent: any task id), so another lane's entry, a lead dir or a shared directory is refused whatever the layout says.
+A sub-agent's git commands that write an index, HEAD or a work tree (GIT_INDEX_WRITES) never run on the main checkout
+(its own lane only), and it never moves a main branch ref (git_main_ref_moves: update-ref, branch -f/-m/-c, tag -f,
+checkout -B, switch -C, a fetch or pull into it (its destination completed as git does: x:main and x:heads/main are
+refs/heads/main), fetch --stdin, symbolic-ref HEAD <main>; update-ref HEAD counts as an index-place write), nor runs
+`git fast-import` (the refs it updates come from its input); ref names are compared with the main refs
+case-insensitively on every system (ref_key: a case-insensitive file system stores refs/heads/MAIN in main's file), so
+a branch named Main counts as main; the integrator, which fast-forwards the main checkout, is exempt from both; a tree
+the guard cannot resolve is not judged for index writes. A dashed git program (git-push, git-update-ref, by name or
+full path) is judged as git <subcommand> by every git rule, and git's words are judged as written and brace-expanded
+(git_braces). A git subcommand computed at run time ($x, ${x}, $(…), `…`) or holding a glob character is refused for
+every sub-agent, the integrator included; a judged ref name computed at run time, or a ref name (not a refspec)
+holding a glob or brace character, for the others (a substituted path such as `git -C "$WT" log` is judged as
+before).
+Declared limits of that rule (deliberate flags, not accidents): checkout/switch --ignore-other-worktrees with main,
+`worktree add -f -f … main`, `worktree add -b/-B main`, and a sub-agent's `git worktree add` from the main checkout
+(creating lanes is the lead's).
+Declared limits as well: a shell string run by find -exec (`-exec sh -c '<string>'`) is not parsed (name the paths in
+the command itself); git extensions (`git lfs`, a `git-<name>` program that is no git builtin) are not modelled, nor
+in-place writers of
+other programs (`awk -i inplace`, an interpreter's `-c`/`-e` code); symlinks that already exist below a glob or a find
+start are not followed one by one (the
+guard resolves the path as written and where its directories lead, not every match a glob or a traversal reaches).
 """
+import fnmatch
 import importlib.util
 import json
 import os
@@ -118,6 +151,7 @@ except Exception as _exc:   # noqa: BLE001 - a broken companion: every call is r
 HOME = os.path.expanduser("~")
 # set by configure() from the loaded configuration (run_guard refuses every call when there is none: fail closed)
 CFG = REPO = WT = SCRATCH = OTHER_PROJECT = None
+SCRATCH_GLOB = ("*",)
 RUNTIME_CONFIG = LANE_TMP_PREFIXES = PROTECTED_ANY = PROTECTED_MAIN = MAIN_REFS = PROJECT_DIRS = SUB_MAIN_WRITES = ()
 BRANCH_OK = PROTECTED_ERROR = None
 PROTECTED = []
@@ -141,12 +175,14 @@ def other_projects_pattern(repo, wt):
 
 def configure(cfg):
     """Derive every path and name from the project's configuration (hook_config.load)."""
-    global CFG, REPO, WT, SCRATCH, RUNTIME_CONFIG, OTHER_PROJECT, LANE_TMP_PREFIXES, PROTECTED_ANY, PROTECTED_MAIN
+    global CFG, REPO, WT, SCRATCH, SCRATCH_GLOB, RUNTIME_CONFIG, OTHER_PROJECT, LANE_TMP_PREFIXES, PROTECTED_ANY
+    global PROTECTED_MAIN
     global MAIN_REFS, PROJECT_DIRS, SUB_MAIN_WRITES, BRANCH_OK, NAME_PREFIX, DEMO_PREFIX
     global SLUG, ENV_PREFIX, TASK_RE, PROTECTED, PROTECTED_ERROR, HOME
     CFG = cfg
     HOME = CONFIG.slash(CONFIG.expanduser("~"))
     REPO, WT, SCRATCH = (CONFIG.slash(CFG[k]) for k in ("repo", "wt", "scratch"))
+    SCRATCH_GLOB = CFG["scratch_glob"]
     RUNTIME_CONFIG = CFG["runtime_config"]
     OTHER_PROJECT = other_projects_pattern(REPO, WT)
     NAME_PREFIX, SLUG = CFG["name_prefix"], CFG["slug"]
@@ -164,6 +200,7 @@ def configure(cfg):
 
 
 GLOB = re.compile(r"[*?\[]")
+SUBST = re.compile(r"[$`]")   # a variable, a command substitution or backticks kept in a word: known only at run time
 SHELLS = ("sh", "bash", "dash", "zsh", "ksh")  # su -c, watch and coproc are handled as shells/wrappers too
 DELETERS = ("rm", "rmdir", "unlink", "shred", "truncate", "srm")
 DEVICE_OK = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/stdin", "/dev/tty")
@@ -183,12 +220,17 @@ WRAPPERS = {
     "flock": {"-w", "-E", "--timeout", "--conflict-exit-code"},
     "nohup": set(), "setsid": set(), "builtin": set(), "command": set(),
 }
-CHECKED_PROGS = re.compile(r"\b(git|mv|cp|tee|sed|rm|rmdir|unlink|find|rsync|chmod|chown|ln|install|dd|truncate|"
-                           r"shred|perl|tar|curl|wget|pkill|killall|prune|mkfs|wipefs)\b|-delete\b|>")
+CHECKED_PROGS = re.compile(r"\b(git|mv|cp|tee|sed|rm|rmdir|unlink|find|rsync|chmod|chown|chgrp|touch|setfacl|chattr|"
+                           r"ln|install|dd|truncate|shred|perl|tar|curl|wget|pkill|killall|prune|mkfs|wipefs)\b"
+                           r"|-delete\b|>")
 LOOKS_DESTRUCTIVE = re.compile(r"\b(rm|rmdir|shred|unlink|truncate|pkill|killall|prune|mkfs|wipefs|clean)\b|-delete\b|>")
 XARGS_OPTS = {"-a", "-d", "-E", "-e", "-I", "-L", "-l", "-n", "-P", "-s", "--arg-file", "--delimiter", "--eof",
               "--replace", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}
 XARGS_DANGER = DELETERS + SHELLS + ("git", "mv", "chmod", "chown", "find", "dd", "tee", "cp")
+# the programs check_program judges as file writers (write_targets, sed -i, tool_writes, dd of=, truncate); with the
+# metadata changers (METADATA_OPTS) they are what a sub-agent may not run from find -exec on unjudged files or from
+# xargs on names read from stdin
+WRITERS = ("mv", "cp", "tee", "ln", "install", "rsync", "sed", "perl", "curl", "wget", "tar", "dd", "truncate")
 
 
 class Deny(Exception):
@@ -713,6 +755,17 @@ def check_delete_path(raw, cwd, ctx, what="delete", expanded=False, start=False)
         delete_rules(v, raw, ctx, what, start)
 
 
+def own_scratch_entry(rel, raw, ctx, what):
+    """A sub-agent deletes in the scratch root only inside a task entry: a component at or below the layout's entry
+    level named <own task>-… (an integrator or an unbound agent: any <task id>-…). Whatever the configured layout, a
+    lead dir, another lane's entry or a shared directory there is never its to delete (a too-shallow glob included)."""
+    task = None if ctx.get("agent_type") == "integrator" else own_task(ctx)
+    head = re.escape(task) + "-" if task else "(?:" + TASK_RE + ")-"
+    if not any(re.match(head, c) for c in rel[len(SCRATCH_GLOB) - 1:]):
+        raise Deny(f"{what} of '{raw}': in the scratch root a sub-agent deletes only inside its own task entry "
+                   f"({task or '<task>'}-<role>); not another lane's entry, a shared or a lead directory")
+
+
 def holds_protected(base):
     """base is a checkout root (it holds .git and the protected dirs) or an ancestor of the main checkout, the
     worktrees dir or the scratch root."""
@@ -732,12 +785,14 @@ def delete_rules(p, raw, ctx, what, start=False):
     if base == SCRATCH:
         raise Deny(f"{what} of the whole project scratch root ({SCRATCH}) is not allowed; name a subpath")
     if under(base, SCRATCH):
-        # <SCRATCH>/<session>/scratchpad is shared by every lane of a session: never the session dir, its
-        # scratchpad or tasks dir, nor a glob directly inside the scratchpad; only a named <TASK>-<role> subfolder
+        # every level above the task entries (BOA_SCRATCH_GLOB: the runtime's layout, its last component the entry) is
+        # shared by the lanes: never a directory there, nor a glob directly inside one; only a named entry or below
         rel = base[len(SCRATCH) + 1:].split("/")
-        if len(rel) < 2 or (len(rel) == 2 and rel[1] in ("scratchpad", "tasks")):
-            raise Deny(f"{what} of '{raw}': the shared session scratchpad belongs to every lane; delete only your "
-                       "own <TASK>-<role> subfolder")
+        if len(rel) < len(SCRATCH_GLOB):
+            raise Deny(f"{what} of '{raw}': a shared level of the scratch root (layout "
+                       f"{'/'.join(SCRATCH_GLOB)}) belongs to every lane; delete only your own <TASK>-<role> entry")
+        if ctx["subagent"]:
+            own_scratch_entry(rel, raw, ctx, what)
         return
     if any(base.startswith(pref) for pref in LANE_TMP_PREFIXES) and base.count("/") >= 2 and not (g and base == "/tmp"):
         return
@@ -769,10 +824,10 @@ def delete_rules(p, raw, ctx, what, start=False):
 
 
 def check_write_path(raw, cwd, ctx, what="write", expanded=False):
-    """Bash writes: everyone keeps off <REPO>/.boa, <REPO>/.env* and the runtime's configuration names (RUNTIME_CONFIG)
+    """Shell writes: everyone keeps off <REPO>/.boa, <REPO>/.env* and the runtime's configuration names (RUNTIME_CONFIG)
     in <REPO>; subagents write only in their lane,
     the scratch root, /tmp/<name prefix>*, and the main checkout's SUB_MAIN_WRITES prefixes. Also used for the
-    Write/Edit tools."""
+    file-write tools."""
     if raw in DEVICE_OK or raw.startswith(("/dev/fd/", "/dev/tcp/", "/dev/udp/")) or raw == "-" or raw.startswith(("<(", ">(")):
         return
     if not expanded and "{" in raw:
@@ -806,8 +861,8 @@ def write_rules(p, raw, ctx, what):
             (os.path.dirname(p) == REPO and env_name(os.path.basename(p))):
         names = ", ".join(f"{REPO}/{d}" for d in kept)
         raise Deny(f"{what} to '{raw}': {names} (the hooks, their config and the agent runtime's own configuration) "
-                   f"and {REPO}/.env* are not written from Bash "
-                   f"(the lead uses the Edit tool or {ENV_PREFIX}GUARD_LEAD_VERIFIED=<reason>)")
+                   f"and {REPO}/.env* are not written from the shell "
+                   f"(the lead uses its file-editing tool or {ENV_PREFIX}GUARD_LEAD_VERIFIED=<reason>)")
     if not ctx["subagent"]:
         return
     if under(p, SCRATCH) or any(p.startswith(x) for x in LANE_TMP_PREFIXES):
@@ -837,12 +892,20 @@ def parse_protected(path):
     regular expression without blanks (\\s for whitespace) searched in the command's text (the program's basename
     and its arguments joined by single blanks, quotes removed, after wrappers such as sudo or env); reason: shown in
     the refusal. A missing file means no rules; a file that cannot be read, is over 64 KiB, or holds an invalid line
-    is an error: every shell command is refused until it is fixed (fail closed)."""
+    is an error: every shell command is refused until it is fixed (fail closed); so is a path that is a FIFO, a
+    device, a socket, a directory or a dangling symbolic link (boa_config.check_config_path: one stat, never an open;
+    a dangling link read as a missing file would drop every rule)."""
+    try:
+        CONFIG.reader().check_config_path(path)
+    except Exception as exc:   # noqa: BLE001 - a named error, the guard then refuses every shell command
+        return [], str(exc)
     try:
         with open(path, "rb") as fh:
             raw = fh.read(64 * 1024 + 1)
     except FileNotFoundError:
-        return [], None
+        if not os.path.lexists(path):   # truly nothing there; a link that dangled after the check never means "none"
+            return [], None
+        return [], f"{path} is a dangling symbolic link, not a regular file: not read"
     except OSError as exc:
         return [], f"{path} cannot be read ({exc.__class__.__name__})"
     if len(raw) > 64 * 1024:
@@ -901,7 +964,28 @@ def rel(x, base):
     return None if base is None else norm(pjoin(base, x))
 
 
-def check_git(args, cwd, ctx, assigns=()):
+def dashed_git(prog):
+    """prog is the dashed form of a git builtin (git-push, git-update-ref), as git's exec path holds them."""
+    return prog.startswith("git-") and prog[4:] in GIT_BUILTINS
+
+
+def git_braces(args):
+    """git's words brace-expanded as bash would (expand_braces) where they hold a list ({a,b}); a word whose expansion
+    can't be checked (a sequence, unbalanced, too many) is kept as written. The guard does not know which words were
+    quoted, so check_git judges this form and the words as written, and refuses when either is refused."""
+    out = []
+    for w in args:
+        try:
+            out += expand_braces(w) if "{" in w else [w]
+        except Deny:
+            out.append(w)
+    return out
+
+
+def check_git(args, cwd, ctx, assigns=(), braced=False):
+    variant = args if braced else git_braces(args)
+    if variant != list(args):
+        check_git(variant, cwd, dict(ctx, braced_copy=True), assigns, True)
     a = list(args)
     gcwd = cwd
 
@@ -969,6 +1053,12 @@ def check_git(args, cwd, ctx, assigns=()):
             a = a[1:]
     if not a:
         return
+    if ctx["subagent"] and SUBST.search(a[0]):
+        raise Deny(f"git subcommand '{a[0]}' is computed at run time (a variable or a command substitution): "
+                   "the guard cannot judge what it runs; spell the subcommand out")
+    if ctx["subagent"] and GLOB.search(a[0]):
+        raise Deny(f"git subcommand '{a[0]}' holds a glob character: the shell may expand it to another subcommand; "
+                   "spell the subcommand out")
     git_sub(a[0], [canonical_option(t) for t in a[1:]], dict(aliases), 0, args, gcwd, work_tree, git_dir, ctx)
 
 
@@ -1027,27 +1117,28 @@ def git_sub(sub, rest, aliases, depth, args, gcwd, work_tree, git_dir, ctx):
                        "(--get, --list, get) or override a harmless setting for one command (-c)")
         if key is not None:
             git_exec_config(key, value, gcwd, ctx, "config")
+    if ctx["subagent"] and ctx.get("agent_type") != "integrator" and \
+            git_main_ref_moves(sub, rest, not ctx.get("braced_copy")):
+        if sub == "fast-import":
+            raise Deny("'git fast-import' updates the refs its input names, which the guard cannot judge (it may move "
+                       f"the main branch, {CFG['main_branch']}); that is the lead's and the integrator's")
+        raise Deny(f"'git {sub}' would move the main branch ({CFG['main_branch']}), shared by every checkout; that is "
+                   "the lead's and the integrator's (work on your lane branch)")
     if sub == "push":
         force = any(t in ("-f", "--force", "--mirror") or t.startswith("--force-with-lease")
                     or t.startswith("--force-if-includes") for t in rest)
         delete = any(t in ("-d", "--delete") for t in rest)
-        positional, k, repo_opt = [], 0, False
-        while k < len(rest):
-            t = rest[k]
-            if t == "--repo":
-                repo_opt, k = True, k + 2
-                continue
-            if t.startswith("--repo="):
-                repo_opt = True
-            elif not t.startswith("-"):
-                positional.append(t)
-            k += 1
+        positional = git_words("push", rest)   # option values (-o, --repo, --receive-pack) left out
+        repo_opt = any(t == "--repo" or t.startswith("--repo=") for t in rest)
         refs = positional if repo_opt else positional[1:]  # the remote is --repo or the first positional
         plus = [r for r in refs if r.startswith("+")]
         colon_del = [r for r in refs if r.startswith(":")]
         if "--mirror" in rest or "--all" in rest and force:
             raise Deny("git push --mirror/--all --force is not allowed")
-        if ctx["subagent"] and any(r.lstrip("+").split(":")[-1] in MAIN_REFS for r in refs):
+        if ctx["subagent"] and ctx.get("agent_type") != "integrator":
+            for r in refs:   # a substitution may name main (or hold a ':' destination)
+                judged_ref(r)
+        if ctx["subagent"] and any(push_into_main(r) for r in refs):
             raise Deny("subagents never push to main (the integrator merges through PRs)")
         if force or plus:
             if not refs:
@@ -1064,7 +1155,7 @@ def git_sub(sub, rest, aliases, depth, args, gcwd, work_tree, git_dir, ctx):
         return
     if sub == "branch" and any(t in ("-D", "-d", "--delete") or (t.startswith("-") and "D" in t) for t in rest):
         for t in rest:
-            if not t.startswith("-") and t in MAIN_REFS:
+            if not t.startswith("-") and is_main_ref(t):
                 raise Deny(f"deleting the main branch ({t}) is not allowed")
         return
     if sub == "worktree" and rest and rest[0] == "remove":
@@ -1081,6 +1172,10 @@ def git_sub(sub, rest, aliases, depth, args, gcwd, work_tree, git_dir, ctx):
                or (sub == "switch" and any(t in ("-f", "--force", "--discard-changes") for t in rest))
                or (sub == "checkout" and any(t in (".", "--", "-f", "--force", "-p", "--patch") for t in rest)))
     if not discard:
+        if ctx["subagent"] and ctx.get("agent_type") != "integrator" and git_writes_index(sub, rest):
+            tree = work_tree or gcwd   # a tree the guard can't resolve: not judged (a declared limit)
+            if tree not in (None, "?") and git_dir != "?":
+                subagent_git_place(tree, git_dir, sub, ctx, "would write the main checkout's index and files (the lead's)")
         return
     tree = work_tree or gcwd
     if tree in (None, "?") or git_dir == "?":
@@ -1094,12 +1189,198 @@ def git_sub(sub, rest, aliases, depth, args, gcwd, work_tree, git_dir, ctx):
             raise Deny(f"'git {sub}' on {p}: outside the project's repositories (other projects share this host)")
     in_main = tree == REPO or under(tree, REPO)
     if ctx["subagent"]:
-        if in_main or (git_dir and (git_dir == REPO or under(git_dir, REPO)) and not under(git_dir, REPO + "/.git/worktrees")):
-            raise Deny(f"'git {sub}' in the main checkout would discard the lead's state; work in {WT}/<task>/")
-        if under(tree, WT):
-            check_lane(WT + "/" + tree[len(WT) + 1:].split("/", 1)[0], ctx, f"git {sub}")
+        subagent_git_place(tree, git_dir, sub, ctx, "would discard the lead's state")
     if sub == "clean" and in_main:
         raise Deny("git clean in the main checkout would delete .env, logs, the lead's state and ignored data")
+
+
+# git subcommands that write the index, HEAD or the work tree of the repository they run in (git(1) porcelain and the
+# plumbing that does; `stage` is git's own alias of add; citool and gui commit). Their read-only forms are in
+# GIT_INDEX_READS; commands that only write objects or shared refs are not here (the main refs: git_main_ref_moves)
+# (clean and restore are not listed: the discard rule judges them first, for every agent)
+GIT_INDEX_WRITES = frozenset({"add", "stage", "update-index", "rm", "mv", "stash", "reset", "checkout",
+                              "switch", "commit", "merge", "pull", "rebase", "cherry-pick", "revert", "am", "apply",
+                              "read-tree", "checkout-index", "bisect", "submodule", "sparse-checkout",
+                              "merge-file", "merge-index", "mergetool", "rerere", "symbolic-ref", "unpack-file",
+                              "filter-branch", "citool", "gui"})
+GIT_INDEX_READS = {"stash": ("list", "show"), "bisect": ("log", "view", "visualize", "terms"),
+                   "submodule": ("status", "summary"), "sparse-checkout": ("list",), "rerere": ("status", "diff", "remaining")}
+
+
+def git_writes_index(sub, rest):
+    """git <sub> writes the index, HEAD or the work tree (the read-only forms of GIT_INDEX_READS, a bare `submodule`
+    (its status), apply's reports and `symbolic-ref <name>` alone do not)."""
+    words = [t for t in rest if not t.startswith("-")]
+    if sub in GIT_INDEX_READS and words[:1] and words[0] in GIT_INDEX_READS[sub]:
+        return False
+    if sub == "submodule" and not words:
+        return False
+    if sub == "symbolic-ref" and len(words) <= 1 and not any(t in ("-d", "--delete") for t in rest):
+        return False
+    if sub == "update-ref" and git_words(sub, rest)[:1] == ["HEAD"]:
+        return True   # moves the HEAD of the checkout it runs in
+    if sub == "branch" and len(words) == 1 and any(re.fullmatch(r"-[A-Za-z]*[mM][A-Za-z]*", t) or t == "--move"
+                                                   for t in rest):
+        return True   # branch -m <new>: renames the branch checked out there (in the main checkout: main)
+    if sub == "apply" and "--apply" not in rest and any(t in ("--check", "--stat", "--numstat", "--summary") for t in rest):
+        return False
+    return sub in GIT_INDEX_WRITES
+
+
+# options of the ref-moving git commands that take a separate value (left out of their positional words)
+GIT_VALUED = {"tag": ("-m", "-F", "-u", "--message", "--file", "--local-user", "--cleanup", "--format", "--sort",
+                      "--points-at", "--contains", "--no-contains", "--merged", "--no-merged"),
+              "branch": ("-u", "--set-upstream-to", "--format", "--sort", "--points-at", "--contains", "--no-contains",
+                         "--merged", "--no-merged"),
+              "update-ref": ("-m",), "symbolic-ref": ("-m",),
+              "push": ("-o", "--push-option", "--repo", "--receive-pack", "--exec"),
+              "fetch": ("--depth", "--deepen", "--shallow-since", "--shallow-exclude", "-j", "--jobs", "--upload-pack",
+                        "--refmap", "-o", "--server-option", "--negotiation-tip", "--filter",
+                        "--recurse-submodules-default"),
+              "pull": ("--depth", "--deepen", "--shallow-since", "--shallow-exclude", "-j", "--jobs", "--upload-pack",
+                       "--refmap", "-o", "--server-option", "--negotiation-tip", "--filter", "-s", "--strategy", "-X",
+                       "--strategy-option")}
+
+
+def ref_key(name):
+    """A ref name as the main-ref rules compare it: upper-cased then casefolded on every system, since a
+    case-insensitive file system stores refs/heads/MAIN in main's own file (so a branch named Main counts as main);
+    the upper-casing folds the dotless i, U+0131, too (main spelled with it is main)."""
+    return name.upper().casefold()
+
+
+def is_main_ref(name):
+    """name is a main branch ref (MAIN_REFS), compared by ref_key."""
+    return ref_key(name) in {ref_key(m) for m in MAIN_REFS}
+
+
+def judged_ref(word):
+    """word as a ref name the main-ref rules judge; refused when it holds a substitution ($x, ${x}, $(…), `…`): its
+    value is only known when the command runs."""
+    if SUBST.search(word):
+        raise Deny(f"'{word}' is a ref name computed at run time (a variable or a command substitution): the guard "
+                   "cannot tell whether it names the main branch; spell the ref name out")
+    return word
+
+
+def main_word(word, written=True):
+    """word (judged_ref) is a main branch ref; a ref name (not a refspec) holding a glob or a brace is refused when it
+    is a word as written (written): the shell may expand it to main. The brace-expanded copy (git_braces) is not
+    refused for them: its words are only a reading of the command."""
+    if written and re.search(r"[*?\[{]", word):
+        raise Deny(f"'{word}' is a ref name with a glob or brace character: the shell may expand it to another name; "
+                   "spell the ref name out")
+    return is_main_ref(judged_ref(word))
+
+
+def full_ref(dst):
+    """A fetch/pull destination completed as git completes it: refs/… as is, heads/…, tags/… and remotes/… under
+    refs/, anything else under refs/heads/ (`x:heads/main` and `x:main` both write refs/heads/main). The prefix is read
+    through ref_key: a prefix in another case only refuses more."""
+    key = ref_key(dst)
+    if key.startswith("refs/"):
+        return dst
+    return ("refs/" if key.startswith(("heads/", "tags/", "remotes/")) else "refs/heads/") + dst
+
+
+def refspec_into_main(spec):
+    """A fetch/pull refspec whose destination (full_ref) is a main ref (MAIN_REFS), or a pattern that covers one
+    (`+refs/heads/*:refs/heads/*`)."""
+    if ":" not in spec:
+        return False
+    dst = full_ref(judged_ref(spec.lstrip("+").split(":")[-1]))
+    return is_main_ref(dst) or bool(GLOB.search(dst) and any(fnmatch.fnmatchcase(ref_key(m), ref_key(dst))
+                                                             for m in MAIN_REFS))
+
+
+def push_into_main(spec):
+    """A push refspec whose destination is main, judged like a fetch destination (refspec_into_main: completed by
+    full_ref, a pattern covering main counts); a colon-less refspec, and one holding a substitution (only the
+    integrator's reaches here), compared by its completed name."""
+    if ":" in spec and not SUBST.search(spec):
+        return refspec_into_main(spec)
+    return is_main_ref(full_ref(spec.lstrip("+").split(":")[-1]))
+
+
+def git_words(sub, rest):
+    """The positional words of git <sub>: option words and the values of its valued options (GIT_VALUED; in a short
+    cluster such as -fm the first valued letter takes the rest of the cluster or the next word) left out."""
+    valued, out, k = GIT_VALUED.get(sub, ()), [], 0
+    letters = "".join(o[1] for o in valued if len(o) == 2)
+    while k < len(rest):
+        t = rest[k]
+        k += 1
+        if t == "--":
+            out += rest[k:]
+            break
+        if t.startswith("--"):
+            k += t in valued
+            continue
+        if t.startswith("-") and len(t) > 1:
+            first = next((j for j, c in enumerate(t[1:], 1) if c in letters), None)
+            k += first == len(t) - 1
+            continue
+        out.append(t)
+    return out
+
+
+def git_main_ref_moves(sub, rest, written=True):
+    """git <sub> creates, moves, renames or deletes a main branch ref (MAIN_REFS, compared by ref_key) shared by every
+    checkout: update-ref <main> (or --stdin: refs read from input), fast-import (refs read from input), branch
+    -f/-m/-M/-c/-C naming main, tag -f naming main, checkout -B / switch -C main, fetch or pull with a refspec (or
+    --refmap) into main (completed by full_ref) or a pattern covering it, or fetch --stdin (refspecs read from input),
+    symbolic-ref naming main (as the symref, its target, or -d). A judged ref name holding a substitution is refused
+    (judged_ref); written=False for the brace-expanded copy of the words (main_word)."""
+    if sub == "fast-import":   # the refs it updates come from its input, which cannot be judged
+        return True
+    words = git_words(sub, rest)
+    if sub == "update-ref":
+        return "--stdin" in rest or bool(words[:1] and main_word(words[0], written))
+    if sub == "symbolic-ref":   # main made a symref, HEAD pointed at main (its commits would move main), main deleted
+        if any(t in ("-d", "--delete") for t in rest):
+            return any(main_word(w, written) for w in words[:1])
+        return len(words) >= 2 and any(main_word(w, written) for w in words[:2])
+    flags = set("".join(t[1:] for t in rest if re.fullmatch(r"-[A-Za-z]+", t)))
+    longs = {t.split("=", 1)[0] for t in rest if t.startswith("--")}
+    if sub == "branch" and (flags & set("mM") or "--move" in longs):   # renames: either name may be main
+        return any(main_word(w, written) for w in words[:2])
+    if sub == "branch" and (flags & set("cC") or "--copy" in longs):   # copies: main as the new name
+        return bool(words[-1:] and main_word(words[-1], written))
+    if sub in ("branch", "tag") and ("f" in flags or "--force" in longs):   # the ref named first (then a start point)
+        return bool(words[:1] and main_word(words[0], written))
+    if sub in ("checkout", "switch"):   # the name -B (checkout) / -C, --force-create (switch) force-creates
+        letter, names = "B" if sub == "checkout" else "C", []
+        valued = letter + letter.lower()   # -b/-B (checkout), -c/-C (switch) take a branch name
+        for k, t in enumerate(rest):
+            if sub == "switch" and t == "--force-create":
+                names += rest[k + 1:k + 2]
+            elif sub == "switch" and t.startswith("--force-create="):
+                names.append(t.split("=", 1)[1])
+            elif re.fullmatch(r"-[A-Za-z]\S*", t):
+                # a short cluster as git reads it: the first letter that takes a value takes the rest of the cluster
+                # or the next word (-fB main, -qB main, -Bmain); -bmyBranch is -b with the name myBranch
+                j = next((j for j, c in enumerate(t[1:], 1) if c in valued), None)
+                if j is not None and t[j] == letter:
+                    names += [t[j + 1:]] if j + 1 < len(t) else rest[k + 1:k + 2]
+        return any(main_word(w, written) for w in names)
+    if sub in ("fetch", "pull"):   # every refspec word (the remote never holds a ':' destination), --refmap, --stdin
+        refmaps = [t.split("=", 1)[1] for t in rest if t.startswith("--refmap=")] + \
+                  [rest[k + 1] for k, t in enumerate(rest[:-1]) if t == "--refmap"]
+        for w in words[1:] + refmaps:   # a refspec after the remote: a substitution may hold its ':' destination
+            if ":" not in w:
+                judged_ref(w)
+        return "--stdin" in rest or any(refspec_into_main(w) for w in words + refmaps)
+    return False
+
+
+def subagent_git_place(tree, git_dir, sub, ctx, why):
+    """A sub-agent's git command that changes a repository's state: never the main checkout (its work tree, or its own
+    .git rather than a lane's .git/worktrees/<lane>), only its own lane."""
+    if tree == REPO or under(tree, REPO) or (git_dir and (git_dir == REPO or under(git_dir, REPO))
+                                             and not under(git_dir, REPO + "/.git/worktrees")):
+        raise Deny(f"'git {sub}' in the main checkout {why}; work in {WT}/<task>/")
+    if under(tree, WT):
+        check_lane(WT + "/" + tree[len(WT) + 1:].split("/", 1)[0], ctx, f"git {sub}")
 
 
 def git_output_targets(sub, rest):
@@ -1288,7 +1569,11 @@ def write_targets(prog, args):
     if prog == "tee":
         return pos
     if prog == "rsync":
-        return [p for p in pos[-1:] if not re.match(r"^[\w.@-]+:", p)]
+        # host:path is a remote destination, not a local write; on Windows a drive letter (C:/x, C:\x) is a local path,
+        # never a one-letter host (the guard itself writes a Windows path in that form for find -exec's {}); elsewhere
+        # p:/x stays a one-letter host
+        drive = CONFIG.on_windows()
+        return [p for p in pos[-1:] if not re.match(r"^[\w.@-]+:", p) or (drive and re.match(r"^[A-Za-z]:[/\\]", p))]
     if prog == "install" and any(t in ("-d", "--directory") for t in args):
         return pos
     if prog == "mv":
@@ -1296,6 +1581,54 @@ def write_targets(prog, args):
     if target:
         return [target]
     return pos[-1:] if len(pos) >= 2 else []
+
+
+# metadata changers: (short options without a value, short options that take one, long options that take one)
+METADATA_OPTS = {
+    "chmod": ("cfvR", "", ("--reference",)),
+    "chown": ("cfvhRHLP", "", ("--reference", "--from")),
+    "chgrp": ("cfvhRHLP", "", ("--reference",)),
+    "touch": ("acfhm", "dtr", ("--date", "--reference", "--time")),
+    "setfacl": ("bkndRLPvh", "mMxX", ("--modify", "--modify-file", "--remove", "--remove-file", "--set", "--set-file")),
+    "chattr": ("RVf", "vp", ()),
+}
+
+
+def metadata_targets(prog, args):
+    """The files a metadata changer (METADATA_OPTS) changes, as written; None when they are named in an input file
+    (setfacl --restore). The mode, owner or group operand is left out unless --reference replaces it; a mode word that
+    starts with - + or = (chmod -x, chattr +i) is a mode, never an option or a file."""
+    flags, valued, long_valued = METADATA_OPTS[prog]
+    operands, modes, ref, i = [], [], False, 0
+    while i < len(args):
+        t = args[i]
+        i += 1
+        if t == "--":
+            operands += args[i:]
+            break
+        if t.startswith("--"):
+            name = t.split("=", 1)[0]
+            if prog == "setfacl" and "--restore".startswith(name) and len(name) > 4:
+                return None
+            # GNU reads any unambiguous prefix (--ref=x is --reference=x); an ambiguous one makes the program fail
+            ref = ref or ("--reference".startswith(name) and len(name) > 2)
+            if "=" not in t and any(o.startswith(name) for o in long_valued) and len(name) > 2:
+                i += 1   # its value is the next word
+            continue
+        if prog in ("chmod", "chattr") and len(t) > 1 and (
+                t[0] in "+=" or (t[0] == "-" and set(t[1:]) - set(flags + valued))):
+            modes.append(t)
+            continue
+        if t.startswith("-") and len(t) > 1:
+            for k, c in enumerate(t[1:], 1):
+                if c in valued:   # it takes the rest of the cluster, or the next word
+                    i += k == len(t) - 1
+                    break
+            continue
+        operands.append(t)
+    if (prog == "chmod" and not ref and not modes) or (prog in ("chown", "chgrp") and not ref):
+        operands = operands[1:]   # the mode, owner or group
+    return operands
 
 
 def tool_writes(prog, args):
@@ -1948,9 +2281,12 @@ def check_simple(words, redirs, docs, cwd, ctx, depth, prev_op, next_op):
         while i < len(rest) and rest[i].startswith("-"):
             i += 2 if rest[i] in XARGS_OPTS else 1
         inner = unwrap([(w, []) for w in rest[i:]], cmd_cwd, ctx, depth)[0]
-        if inner and os.path.basename(inner[0][0]) in XARGS_DANGER + tuple(protected_programs()):
-            raise Deny("xargs feeding a deleter, git, a shell or a protected command: targets can't be verified; "
-                       "list literal paths/names")
+        if inner and (os.path.basename(inner[0][0]) in XARGS_DANGER + tuple(protected_programs())
+                      or dashed_git(os.path.basename(inner[0][0]))
+                      or (ctx["subagent"] and os.path.basename(inner[0][0]) in WRITERS + tuple(METADATA_OPTS))):
+            raise Deny("xargs feeding a deleter, a writer, a metadata changer, git, a shell or a protected command: "
+                       "names come from stdin and cannot be verified; in your lane use `find <dir> … -exec <program> … "
+                       "{} +` (judged per start) or list literal paths")
         return cwd
     check_program(prog, args, cmd_cwd, ctx, " ".join(w for w, _ in words), assigns)
     return cwd
@@ -1977,7 +2313,7 @@ def check_program(prog, args, cwd, ctx, text, assigns=()):
         while rest and (rest[0] in ("-H", "-L", "-P") or re.fullmatch(r"-O\d*", rest[0]) or rest[0] == "-D"):
             follow = follow or rest[0] in ("-H", "-L")
             rest = rest[2:] if rest[0] == "-D" else rest[1:]
-        destructive, in_exec = "-delete" in rest, False
+        destructive, in_exec, execs = "-delete" in rest, False, []
         for j, t in enumerate(rest):
             if in_exec:   # the words of an -exec command are its own (a grep -L there is no find option)
                 in_exec = t not in (";", "+")
@@ -1988,16 +2324,34 @@ def check_program(prog, args, cwd, ctx, text, assigns=()):
                 inner = unwrap([(w, []) for w in rest[j + 1:]], cwd, ctx, 0)[0]   # env, nice, sudo, ... stripped
                 if inner and os.path.basename(inner[0][0]) in DELETERS + SHELLS:
                     destructive = True
-        if not destructive:
-            return
-        if follow:   # it deletes through symlinks under its start: where they lead is not in the command text
-            raise Deny("find -L/-H/-follow that deletes follows symlinks to paths the guard cannot see; drop -L/-H "
-                       "(find deletes a link itself, never its target) or list the paths to delete")
+                if inner and (os.path.basename(inner[0][0]) in WRITERS + tuple(METADATA_OPTS) + ("git",)
+                              or dashed_git(os.path.basename(inner[0][0]))):
+                    execs.append((t, [w for w, _ in inner]))
         starts = []
         for t in rest:
             if t.startswith("-") or t in ("(", ")", "!"):
                 break
             starts.append(t)
+        if execs and ctx["subagent"]:
+            # -exec of a writer, a metadata changer or git: judged as the program itself, {} standing for a file inside
+            # each start (`-exec mv {} {}.off`, `-exec sed -i … {} +`, `-exec chmod -x {} +`, `-exec git add {} +`)
+            for s in (starts or ["."]):
+                g = GLOB.search(s)
+                found = s.rstrip("/") + "/x" if not g else s
+                found = expand(found) if is_abs(expand(found)) or cwd is None else pjoin(cwd, expand(found))
+                # -execdir/-okdir run in each match's directory: a relative argument is resolved inside the start (a
+                # glob start: the directory its glob part sits in)
+                base = s if not g else (s[:g.start()][:s[:g.start()].rfind("/") + 1] or ".")
+                for kind, words in execs:
+                    end = next((k for k, w in enumerate(words) if w in (";", "+")), len(words))
+                    run = [w.replace("{}", found) for w in words[:end]]
+                    where = cwd if not kind.endswith("dir") else rel(base, cwd)
+                    check_program(os.path.basename(run[0]), run[1:], where, ctx, " ".join(run))
+        if not destructive:
+            return
+        if follow:   # it deletes through symlinks under its start: where they lead is not in the command text
+            raise Deny("find -L/-H/-follow that deletes follows symlinks to paths the guard cannot see; drop -L/-H "
+                       "(find deletes a link itself, never its target) or list the paths to delete")
         for s in (starts or ["."]):
             # find deletes inside its start: checked as <start>/x, but as <start>/* in the shared scratch (like a glob);
             # a start that holds a protected path (a checkout root, an ancestor of the project's roots) is judged like
@@ -2009,8 +2363,16 @@ def check_program(prog, args, cwd, ctx, text, assigns=()):
     if prog in ("chmod", "chown", "chgrp", "setfacl", "chattr", "mount", "umount"):
         if any(dev_path(t, cwd) for t in args if not t.startswith(("-", "+")) or t.startswith("/")):
             raise Deny(f"{prog} on /dev changes a device node of the shared host; never allowed")
-        if prog in ("setfacl", "chattr", "mount", "umount"):
+        if prog in ("mount", "umount"):
             return
+    if prog in METADATA_OPTS and ctx["subagent"]:
+        # a metadata change writes its targets (`chmod -x` of a git hook turns it off): confined like any write
+        targets = metadata_targets(prog, args)
+        if targets is None:
+            raise Deny(f"{prog} --restore: the files it changes are named inside its input, which can't be checked; "
+                       "name each file on the command line")
+        for p in targets:
+            check_write_path(p, cwd, ctx, prog)
     if prog in ("chmod", "chown", "chgrp") and any(t in ("-R", "--recursive") or (t.startswith("-") and "R" in t and not t.startswith("--")) for t in args):
         for p in [t for t in args if not t.startswith("-")][1:]:
             check_delete_path(p, cwd, ctx, f"{prog} -R")
@@ -2054,6 +2416,9 @@ def check_program(prog, args, cwd, ctx, text, assigns=()):
         return
     if prog == "git":
         check_git(args, cwd, ctx, assigns)
+        return
+    if dashed_git(prog):   # the dashed form of a subcommand (git-push, git-update-ref): judged as git <subcommand>
+        check_git([prog[4:]] + list(args), cwd, ctx, assigns)
         return
 
 
@@ -2126,8 +2491,9 @@ def verdict(ev, cfg):
             # lead-only, explicit, logged override after the lead has proven the target is ours; never unaudited
             if log_event("lead", tool, "OVERRIDE (lead-verified)", token):
                 return None
-            raise Deny(f"the lead's override could not be logged in {CFG['log_dir']}/guard-denials.jsonl: refused (an "
-                       "override is always audited); fix the log dir")
+            log = os.path.join(CFG["log_dir"], "guard-denials.jsonl")
+            raise Deny(f"the lead's override could not be logged in {log}: refused (an override is always audited). "
+                       f"{CONFIG.log_ways_out(log, True)}")
         if tool == "shell":
             if ctx["subagent"] and OTHER_PROJECT.search(ev.command):
                 raise Deny("this command names another project on this host (owner rule: lanes never touch other "

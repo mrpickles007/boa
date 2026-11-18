@@ -12,17 +12,18 @@ every agent learns of the pause at its next action, and the hooks capture what e
 | Piece | Event | What it does |
 |---|---|---|
 | `.boa/bin/pause-flag.sh set "<reason>"` | the lead runs it | writes `<lead>/PAUSE` (time, reason); `clear` removes it; `status` |
-| `.boa/hooks/pause_guard.py` | PreToolUse, every tool | while the flag exists, a **sub-agent** may only: write its own `.lane-resume/<role>.md`; append (only) to its lane's `.lane-resume/memories.md`; run read-only git; `git add` / `git commit` in its own worktree; `rm` its own scratch subdir; `kill` its own PIDs; everything else is denied with the reason "project paused: write your resume file (template in the reason), commit wip, clean up, stop your clock, end your turn". The lead is not blocked (it must flush state) |
+| `.boa/hooks/pause_guard.py` | `pre-tool`, every tool kind | while the flag exists, a **sub-agent** may only: write its own `.lane-resume/<role>.md`; append (only) to its lane's `.lane-resume/memories.md`; run read-only git; `git add` / `git commit` in its own worktree; `rm` its own scratch subdir; `kill` its own PIDs; hand back its final report (neutral kind `report`); everything else is denied with the reason "project paused: write your resume file (template in the reason), commit wip, clean up, stop your clock, end your turn". The lead is not blocked (it must flush state) |
 | `.boa/hooks/subagent_stop.py` | sub-agent stop (neutral `subagent-stop`) | journals the agent's final report as always (through the lane journal writer, `.boa/bin/lane-journal.sh`); under the flag also copies the agent's resume file to `<lead>/lanes/<task>-<role>.md`, journals the stop as "paused", warns when there is no resume file |
-| `.boa/hooks/lead_stop.py` | Stop (the lead's turn ends) | under the flag: renders `<lead>/RESUME-LEAD.md` from the status screen (lanes, stages, resume files, next steps, Open HITL) |
-| `.boa/hooks/session_status.py` | SessionStart | injects the status, which shows the flag and lists `RESUME-LEAD.md` and every resume file |
+| `.boa/hooks/lead_stop.py` | `stop` of the lead (its turn ends) | under the flag: renders the status screen (lanes, stages, resume files, next steps, Open HITL) as the marked block of `<lead>/RESUME-LEAD.md` (`<!-- boa:lead-stop:begin -->` … `<!-- boa:lead-stop:end -->`); every byte outside the block is kept, a file without the markers keeps its whole content under a new block, broken markers or a symlink are left untouched and said |
+| `.boa/hooks/session_status.py` | `session-start` | injects the status, which shows the flag and lists `RESUME-LEAD.md` and every resume file |
 
 ## The pause set (exact; the pause guard implements it)
 While the flag is set, a sub-agent may only: write its own `.lane-resume/<role>.md`; append (only) to its lane's
 `.lane-resume/memories.md`; run read-only git; `git add` /
 `git commit` in its own
 worktree; `rm` its own scratch subdir; `kill` its own PIDs (the cleanup needs the task: the agent binding, else the
-lane worktree's name).
+lane worktree's name); hand back its final report (the report tool call, neutral kind `report`, where the runtime
+delivers it so).
 Everything else is denied. Any other resource a lane started (containers, services) is named in its resume file and
 removed by the lead with the project's own commands (the pause guard knows no container engine or service). The integrator stops BEFORE starting the next merge; a merge command already running
 completes; it never
@@ -40,20 +41,37 @@ fresh agent with no memory can continue from it alone.
 turn (the guard leaves it nothing else; a read-only role, reviewer or analyzer, writes no file: it puts the same
 content in its final message, the hook's "no resume file" warning is expected, and the lead writes its resume file
 and the lead-dir copy from that message) → the hooks copy and journal → the lead appends the pause to the registry,
-pushes the lane branches as a backup (no PRs), updates active-context and stages the pause outcome for the fold, stops the daemons → the Stop hook writes
-`RESUME-LEAD.md` → the lead checks it and completes it by hand. Integrator: the integrator stops BEFORE starting the
+pushes the lane branches as a backup (no PRs), updates active-context and stages the pause outcome for the fold, stops the daemons → the lead's stop hook writes
+its status block into `RESUME-LEAD.md` → the lead checks it and completes it by hand (outside the block: the hook keeps
+every byte there). Integrator: the integrator stops BEFORE starting the
 next merge; a merge command already running completes; it never leaves a half-merged train unreported (its resume
 file states the stack state: which lanes merged and at which SHAs, which are stacked and gated, which are not).
 
 ## Resume, step by step
-`/resume-project` → the session-start set → `pause-flag.sh clear` → daemons restarted → the status screen → a per-lane
-plan: the same agents if the session survived (they keep their context and cache), otherwise new agents of the same
+**In another runtime, first.** A pause in one runtime may be resumed by a different runtime that never worked on the
+project, on the same repository. Everything the pause left (the flag, `RESUME-LEAD.md`, the resume files, the
+journals, the memory bank, the `AGENTS.md` block) is plain files and reaches the new agent through `AGENTS.md`'s read
+order; the first runtime's wiring (its hooks, agents, commands) is not read by the second. So when the runtime you
+resume in is not one the capabilities record (04 "Environment") names, or its wiring is absent, you first redo the
+capability self-assessment for this runtime (its latest official documentation and the installed version, SKILL step
+1) and wire it (SKILL step 7) before you clear the flag or resume any lane. Do only what this runtime needs and leave
+the other runtime's wiring untouched: never modify, move, regenerate or remove it unless the user explicitly asks,
+even when it looks stale or duplicated (report what you found); the two coexist. Add this runtime to the capabilities
+record and tell the user what this runtime cannot enforce. A declared limit: until the wiring exists, no hook reminds
+you (no event exists before the wiring), and `AGENTS.md`'s read order is the only path to this step. Never a
+bootstrap: an installed project is resumed, whatever door the agent came in by. Runtimes take turns: two runtimes
+working on the same project at the same time is not supported (one lead, one scratch root); resuming in one after
+the other has paused is.
+
+Then: `/resume-project` → the session-start set → `pause-flag.sh clear` → daemons restarted → the status screen → a per-lane
+plan: the same agents if the session survived (a fresh agent where the size trigger or the wait trigger of 09 §5.3 holds at the resume, else the SAME agent; a resumed
+paused round is the same round continuing and never counts toward the third-round trigger), otherwise new agents of the same
 role, each briefed with its resume-file path, the newest journal entry and the lead's notes since the stop. The code
 and git win over a resume file that disagrees with them.
 
 ## Runtimes without hooks
-Without a PreToolUse hook the flag is not enforced: the lead messages every agent and checks each resume file by
-hand; without a Stop hook the lead writes `RESUME-LEAD.md` itself. `references/runtimes.md` lists what each runtime
+Without a pre-tool hook the flag is not enforced: the lead messages every agent and checks each resume file by
+hand; without a stop hook the lead writes `RESUME-LEAD.md` itself. `references/runtimes.md` lists what each runtime
 supports; what it cannot do is declared in 04 "Environment".
 
 ## Edge cases

@@ -117,6 +117,10 @@ def similar(a: frozenset[str], b: frozenset[str], threshold: float) -> bool:
 def read_lessons(path: str, source: str) -> list[tuple[str, str]]:
     """(lesson, source) of every memory block of a file (a block written by append names its report as the source),
     and of every hand-written '- ' line outside the blocks and outside fenced code blocks (a format example)."""
+    bad = memory_lint.special(path)   # one stat before the open: a FIFO never hangs curate
+    if bad:
+        print(f"metalearning: skipped {bad}", file=sys.stderr)
+        return []
     try:
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
@@ -229,6 +233,10 @@ def main(argv: list[str]) -> int:
               file=sys.stderr)
         return 1
     os.makedirs(os.path.dirname(inbox) or ".", exist_ok=True)
+    bad = memory_lint.special(inbox)   # the inbox is read before the append: a FIFO would hang it
+    if bad:
+        print(f"metalearning: refused: {bad}", file=sys.stderr)
+        return 1
     state = os.path.join(main, cfg.get("BOA_STATE_DIR", ".boa/state"))
     try:
         lock = boa_lock.FileLock(boa_lock.lock_path(state, inbox)).__enter__()

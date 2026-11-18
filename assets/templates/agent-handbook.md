@@ -55,10 +55,13 @@ One-line state of the project: `python3 -I .boa/tools/plan_lanes.py` (progress t
 | Path | Contents |
 |---|---|
 | [docs/agent-handbook.md](agent-handbook.md) | this file |
+| `docs/boa-rules.md` | only with `BOA_AGENTS_BLOCK=pointer`: BOA's rules (what `AGENTS.md` holds in the full mode); `AGENTS.md` then holds the project's own rules and a pointer block, and every BOA "AGENTS.md" for a BOA rule or section means this file |
+| `docs/boa-notice.md` | the attribution of BOA's files in this project (the credit, which licence covers which file, the MIT text): kept while they are here |
 | `docs/specs/` | detailed specs (one file per area), referenced from 02 |
 | `docs/api/` | interface contracts (APIs, formats, protocols) |
 | `docs/parity/features.toml` | the feature inventory (§5.11), checked by `trace_check.py` |
 | `docs/clean-room.md` | only in a clean-room project: the protocol (sides, allowed and forbidden sources, Provenance) |
+| The project's user documentation (OR-74) | the files a user of the project reads (README, guides, API reference, changelog): by default the README plus the `docs/` folder minus the files BOA installs there (`docs/agent-handbook.md`, `docs/boa-notice.md`, `docs/boa-rules.md`, `docs/parity/` and, in a clean-room project, `docs/clean-room.md`; `docs/api/` and `docs/specs/` are user documentation unless the project decides otherwise); the project confirms or changes this set at bootstrap and lists it here; updated in the same change as what users see; swept before every release or milestone closure |
 
 ### 2.3 Code, tests and the rest
 <!-- The lead fills this section at bootstrap and keeps it current: source layout, test layout, build output,
@@ -78,7 +81,7 @@ too large to read.
 | Path | What it is | Read it when | Updated by |
 |---|---|---|---|
 | `.boa/config.env` | the project's BOA settings, one `KEY=value` per line | a tool needs a value | the agent, at wiring and when a value changes |
-| `.boa/markers.json` | the machine-recognised words: the report sections and the Leftovers section the stop hook reads (and its "none"), the review classes, the fold marker, the plan columns; English always kept as aliases | before changing the product language; when a hook does not recognise a report | `boa language set` only (`boa language show` / `check` / `regen`) |
+| `.boa/markers.json` | the machine-recognised words: the report sections and the Leftovers section the stop hook reads (and its "none"), the review classes, the fold marker, the plan columns (each may carry `aliases`: the project's own header names for it); English always kept as aliases; versioned, like `config.env` (a re-install keeps the project's copy) | before changing the product language; when a hook does not recognise a report; when the plan's headers are not the shipped names | `boa language set` only (`boa language show` / `check` / `regen`); a plan column's `aliases` by hand, on a copy checked with `BOA_MARKERS=<copy> boa language check`, then moved into place |
 | `.boa/memory-types.json` | the memory types, their routes and recall moments | before writing or recalling a memory | the lead, when a type changes |
 | `protected-commands.conf` (in `.boa`) | the project's protected commands and patterns the guard refuses (versioned, like `config.env` and `memory-types.json`) | before adding a protection; when the guard refuses a command | the agent, under a task (project-wiring "project protections") |
 | `embed.json` (in `.boa`, when the semantic search is on) | the pinned embedding library and model of the semantic memory search | when the semantic search is switched on or upgraded | the installer |
@@ -109,7 +112,9 @@ BOA ships no gate: the project's gate, its self-test, its secret scanner and its
 The rows between the markers come from the stack plug-in: `boa install` replaces the block with the plug-in's
 `stacks/<stack>/handbook-rows.md` (a complete table naming every file the plug-in installs under `.boa/stack/`, the
 rows file included, literal text with no placeholder); the drift check (§9) compares the block with
-`.boa/stack/handbook-rows.md`.
+`.boa/stack/handbook-rows.md`. The plug-in is project code: versioned (the `.gitignore` block excepts `.boa/stack/`
+from BOA's ignored files), adapted by the agent, never overwritten by a re-install (a file the project changed is
+reported `kept` and the template's version is parked by the installer, to be merged by hand).
 
 <!-- boa:stack-rows:begin -->
 | Tool | What, when, how | Who | Side effects / safety |
@@ -124,7 +129,7 @@ rows file included, literal text with no placeholder); the drift check (§9) com
 | Tool | What, when, how | Who | Side effects / safety |
 |---|---|---|---|
 | `.boa/tools/plan_lanes.py` | **the lane calculator**: checks the plan block (unique ids, deps, no cycle, split parents, DONE consistency, closing tasks), waves (wave 1 = eligible now), hotspot serialisation, critical path, progress (DONE/total and work-weighted). `python3 -I .boa/tools/plan_lanes.py`, `--check` (green after any plan edit) | lead; anyone editing 03 | read-only |
-| `.boa/tools/markers.py` (`boa language`) | the **product-language change** and the markers file: `show`, `check`, `texts <key>`, `set <lang> --texts FILE` (every translation required, memory/block syntax refused, every hook self-checked on samples in the new language before the switch, English kept as aliases, the marker sections of the installed files regenerated), `regen [--check]` | lead (09 §31) | `set` rewrites `.boa/markers.json` |
+| `.boa/tools/markers.py` (`boa language`) | the **product-language change** and the markers file: `show`, `check`, `texts <key>`, `set <lang> --texts FILE` (every translation required, memory/block syntax refused, every hook self-checked on samples in the new language before the switch, English kept as aliases, the marker sections of the installed files regenerated; a plan column's `aliases` kept as they are), `regen [--check]`; `check` also refuses an alias equal to another entry's text | lead (09 §31) | `set` rewrites `.boa/markers.json` |
 | `.boa/tools/report_capture.py` | the **report capture** of the sub-agent stop hook (never run on its own): a report's Leftovers items into `<lead>/open-items.md` with owner, role and agent; a task agent's report without a Leftovers section flagged (queue line + the hook's warning); a reviewer's non-blocking findings with no blocking one queued; labels from `.boa/markers.json`; reads only the neutral event's `last_message` | the stop hook | appends to `<lead>/open-items.md` |
 | `.boa/tools/metalearning.py` | checks `10-METALEARNING.md`'s format and lists lessons seen more than once (rule, brief or tooling candidates) | lead at each train | read-only |
 | `.boa/tools/trace_check.py` | the one **traceability check** (OR-49, 09 §26; parity OR-45): plan tasks ↔ contract clauses ↔ specs ↔ features (of the baseline and new) ↔ tasks ↔ proving tests (`@covers-contract`, `@covers-feature`) ↔ the `Managed by` owner ↔ contract versions and their ADRs ↔ residue register ↔ transit queue ↔ pending folds, from the markers of 02/03, `docs/parity/features.toml`, the test headers and the ledgers; one line per mismatch and `MISMATCHES: <n>`. `--report`: the feature report first. `--close`: the train checks PLUS every contract `closed`, an empty transit queue, zero pending folds, the residue register empty (the project's residue check in final mode runs beside it), no open bug. Exit 0 only at 0 mismatches, 1 otherwise, 2 usage error | builder/tester (the task's rows and features), integrator (every train), lead at close-out (must be 0) | read-only |
@@ -146,8 +151,9 @@ rows file included, literal text with no placeholder); the drift check (§9) com
 ### 3.3 Agent runtime configuration (the runtime's own files)
 
 The agent renders BOA's runtime-neutral sources into its runtime's own files when it wires BOA (AGENTS.md §13, the
-BOA package's `references/runtimes.md`: one profile per known runtime) and writes here where they live, so a later
-session finds them; their names go in `BOA_RUNTIME_CONFIG` (the guard keeps shell writes off them).
+BOA package's `references/runtimes.md`: one profile per known runtime; each format checked in the runtime's latest
+documentation and the installed version, OR-63) and writes here where they live, so a later
+session finds them; their names go in `BOA_RUNTIME_CONFIG` (the guard refuses shell writes and deletions of them in the main checkout; git verbs, lane worktrees and the lead's file tools are not judged).
 
 | What | Where |
 |---|---|
@@ -160,31 +166,31 @@ session finds them; their names go in `BOA_RUNTIME_CONFIG` (the guard keeps shel
 Only the loggers' wiring ignores their failures (`|| true`: a logger never breaks the session); a GUARD's wiring
 refuses the call on a deny verdict, a non-zero exit or a timeout (`|| exit 2`, never `|| true`: the guards fail
 closed). The Python hooks run as `"{{BOA_PYTHON}}" -I` (quoted)
-(the absolute interpreter the agent checked at install, so a missing or shadowed `python3` on `PATH` cannot turn a
+(the absolute interpreter the agent checks at every wiring, so a missing or shadowed `python3` on `PATH` cannot turn a
 guard off silently; `session_status.py` warns at session start when a guard cannot start). Each hook reads BOA's
 neutral event on stdin and answers with the neutral verdict; the agent's wiring converts the runtime's payload and
 the verdict (the BOA package's `references/hook-contract.md`).
 Agent models (frontmatter `model` / `effort`, the AGENTS.md §6 roster, OR-27): builder, reviewer and analyzer
 `{{BOA_MODEL_FRONTIER}}` / high; builder-mid, tester and integrator `{{BOA_MODEL_MID}}` / high. Rate-limit fallback
 only after an actual stop (OR-33); trailers name the real model.
-Agent descriptions in a sub-agent spawn must **start with the lane's task id** (`<T> build`, `<T> review r2`): the lane
+The description of a sub-agent spawn must **start with the lane's task id** (`<T> build`, `<T> review r2`): the lane
 journal binds the agent to it (09 §11).
 
 ### 3.4 Hooks (`.boa/hooks/`)
 
 | Hook | What | Notes |
 |---|---|---|
-| `.boa/hooks/guard_destructive.py` | the role-aware **guard** (PreToolUse): deletions only on provably-own paths; sub-agent writes confined to their lane; no other lane, no other project (reads included for sub-agents), no `/dev` targets, the project's protected commands (its `protected-commands.conf` under .boa, written by the agent; the BOA package's `references/safety.md`), no pushes to main by sub-agents, no host damage; the lead's override `{{BOA_ENV_PREFIX}}GUARD_LEAD_VERIFIED=<token> ` (always logged). Non-blocking deny with a reason; fails closed (naming the override as the escape); logs every denial | 09 §11, §7 here |
+| `.boa/hooks/guard_destructive.py` | the role-aware **guard** (`pre-tool`): deletions only on provably-own paths; sub-agent writes confined to their lane; no other lane, no other project (reads included for sub-agents), no `/dev` targets, the project's protected commands (its `protected-commands.conf` under .boa, written by the agent; the BOA package's `references/safety.md`), no pushes to main by sub-agents, no host damage; the lead's override `{{BOA_ENV_PREFIX}}GUARD_LEAD_VERIFIED=<token> ` (always logged). Non-blocking deny with a reason; fails closed (naming the override as the escape); logs every denial | 09 §11, §7 here |
 | `.boa/hooks/hook_config.py` | the configuration the Python hooks share: reads `.boa/config.env` through the one reader `.boa/tools/boa_config.py` (never sources it; a line outside its grammar makes the guards refuse every call), rooted at the repository that holds the hook; the guards' path form on every OS | imported by the hooks |
 | `.boa/hooks/agent_binding.py` | lane orchestration's agent-to-task binding: the hook on the lead's sub-agent spawn (the post-tool event of a `sub-agent` call) records agent id → the first task id of the spawn description in `<BOA_STATE_DIR>/agent-bindings.jsonl`; the guard and the pause guard read it to keep a bound sub-agent in its own lane; `--task-of <agent id>` prints the binding | a project clock may read or extend the file |
 | `.boa/hooks/shell_lexer.py` | the shell lexer of the pause guard (quotes, substitutions, here-documents, segments with their operators) | imported by `pause_guard.py` |
-| `.boa/hooks/pause_guard.py` | while `<lead>/PAUSE` exists a sub-agent may only: write its own `.lane-resume/<role>.md`; append (only) to its lane's `.lane-resume/memories.md`; run read-only git; `git add` / `git commit` in its own worktree; `rm` its own scratch subdir; `kill` its own PIDs (the cleanup needs the task: the agent binding, else the lane worktree's name); everything else is denied with the instruction to do exactly these and end its turn | 09 §13 |
-| `.boa/hooks/session_status.py` | SessionStart: injects the resume protocol and the top of `lead-status.sh` into the context, a three-line memory-writing reminder, the current memories for every active task id (OR-51) (write memories only through `memory_write.py`, the most specific type, supersede — never edit), and warns when a guard hook cannot start (its interpreter `{{BOA_PYTHON}}` missing, a hook file missing or failing its self-check) | — |
-| `.boa/hooks/subagent_stop.py` | SubagentStop: appends the agent's final report to its lane journal `<lead>/lanes/<T>.md` (through `lane_journal.py`; a report over 20 KiB is kept whole in `<lead>/lanes/<T>.full/` and the cut names it); queues the report's Leftovers items in `<lead>/open-items.md` and flags a task agent's report without a Leftovers section (through `report_capture.py`, labels from `.boa/markers.json`); under the pause flag also copies the agent's `.lane-resume/<role>.md` to `<lead>/lanes/<T>-<role>.md` and journals "paused" (warns when there is none) | 09 §13 |
-| `.boa/hooks/memory_check.py` | PostToolUse on Write, Edit, MultiEdit: when the touched file is a memory file, lints it (as `memory_lint.py`, below the `<!-- boa:memory-cutoff -->` line if there is one) and flags broken ids or links | OR-50 |
-| `.boa/hooks/memory_recall.py` | PostToolUseFailure (any tool): searches the memory for the failed call's error text and injects the matching gotcha/trap/lesson ids into the agent's context (OR-51); a sub-agent gets its task's memories through its brief (09 §4) | — |
-| `.boa/hooks/lead_stop.py` | Stop (the lead): under the pause flag renders `<lead>/RESUME-LEAD.md` from the status screen | 09 §13 |
-| `.context-gate/hooks/precompact.sh` | PreCompact: the context-gate snapshot and prompt extension | §3.3 |
+| `.boa/hooks/pause_guard.py` | while `<lead>/PAUSE` exists a sub-agent may only: write its own `.lane-resume/<role>.md`; append (only) to its lane's `.lane-resume/memories.md`; run read-only git; `git add` / `git commit` in its own worktree; `rm` its own scratch subdir; `kill` its own PIDs (the cleanup needs the task: the agent binding, else the lane worktree's name); hand back its final report (the report tool call, neutral kind `report`, where the runtime delivers it so); everything else is denied with the instruction to do exactly these and end its turn | 09 §13 |
+| `.boa/hooks/session_status.py` | `session-start`: injects the resume protocol and the top of `lead-status.sh` into the context, a three-line memory-writing reminder, the current memories for every active task id (OR-51) (write memories only through `memory_write.py`, the most specific type, supersede — never edit), and warns when a guard hook cannot start (its interpreter `{{BOA_PYTHON}}` missing, a hook file missing or failing its self-check) | — |
+| `.boa/hooks/subagent_stop.py` | `subagent-stop`: appends the agent's final report to its lane journal `<lead>/lanes/<T>.md` (through `lane_journal.py`; a report over 20 KiB is kept whole in `<lead>/lanes/<T>.full/` and the cut names it); queues the report's Leftovers items in `<lead>/open-items.md` and flags a task agent's report without a Leftovers section (through `report_capture.py`, labels from `.boa/markers.json`); under the pause flag also copies the agent's `.lane-resume/<role>.md` to `<lead>/lanes/<T>-<role>.md` and journals "paused" (warns when there is none) | 09 §13 |
+| `.boa/hooks/memory_check.py` | `post-tool` of a `file-write`: when the touched file is a memory file, lints it (as `memory_lint.py`, below the `<!-- boa:memory-cutoff -->` line if there is one) and flags broken ids or links | OR-50 |
+| `.boa/hooks/memory_recall.py` | `post-tool-failure` (any tool): searches the memory for the failed call's error text and injects the matching gotcha/trap/lesson ids into the agent's context (OR-51); as `memory_recall.py --session` at `subagent-start` (where the runtime injects context there): the memory reminder and every active lane's current memories into the starting agent; a sub-agent gets its own task's memories through its brief (09 §4) | — |
+| `.boa/hooks/lead_stop.py` | `stop` (the lead): under the pause flag renders the status screen as the marked block of `<lead>/RESUME-LEAD.md` (every byte outside it kept) | 09 §13 |
+| `.context-gate/hooks/precompact.sh` | `pre-compact`: the context-gate snapshot and prompt extension | §3.3 |
 
 ### 3.5 Disk, residue, environment, remote runner
 
@@ -251,10 +257,12 @@ another tool.
 #### Tool card: install and render
 - Files: `.boa/tools/boa_install.py`, `.boa/tools/boa_paths.py`, `.boa/bin/render.py`
 - Purpose: install, re-install and uninstall BOA's files; render the templates with `.boa/config.env`.
-- When: at bootstrap, after a new BOA package, and at removal (`boa uninstall`).
+- When: at bootstrap, after a new BOA package (the update procedure: the BOA package's
+  `docs/02-install-and-wiring.md` "Re-installing and upgrading"; a `kept` file's new version waits in BOA's pending
+  directory until it is merged), and at removal (`boa uninstall`).
 - Wire: nothing (writes no runtime setting: the agent wires the runtime itself).
 - Verify: `boa help` runs from the installed `.boa/`; `boa uninstall` removes exactly what the install recorded.
-- Limits: one install at a time; refuses a config line outside the grammar or an empty required key.
+- Limits: one install at a time; refuses a config line outside the grammar or an empty required key. An output path that exists and is not a regular file (a device, a pipe, a socket, a directory) is refused, never replaced.
 
 #### Tool card: lead status
 - Files: `.boa/bin/lead-status.sh`, `.boa/tools/lead_status.py`
@@ -262,7 +270,7 @@ another tool.
 - When: at session start (the session-start hook shows its top), before filling lanes, after every train.
 - Wire: nothing (the session-start hook runs it).
 - Verify: `boa status --guards` prints no GUARD DOWN line.
-- Limits: reads only (its bookmark file excepted).
+- Limits: reads only (its bookmark file excepted). A file it reads that is a FIFO, a device, a socket or a directory is never opened: it is skipped with one line naming it. A pause flag that is not a regular file is shown as a pause, naming it, and lane admission is closed.
 
 #### Tool card: lane worktrees
 - Files: `.boa/bin/lane-worktree.sh`, `.boa/tools/lane_worktree.py`
@@ -278,15 +286,15 @@ another tool.
 - When: at every sub-agent stop.
 - Wire: the runtime's sub-agent stop, as the neutral `subagent-stop` event.
 - Verify: after a sub-agent ends, its report is the newest entry of its lane's journal.
-- Limits: the report is capped (with a marker); a logger: its failures never stop the session.
+- Limits: the report is capped (with a marker); a logger: its failures never stop the session. A resume-file copy whose target exists and is not a regular file (a device, a pipe, a socket, a directory) is not made, never replaced: the journal says so.
 
 #### Tool card: language and markers
 - Files: `.boa/tools/markers.py`
-- Purpose: the product-language change: the machine-recognised words (report sections, the Leftovers section and its "none", review classes, the fold marker, plan columns) live in `.boa/markers.json`; `boa language set <lang> --texts FILE` switches only when every hook passes on samples in the new language.
+- Purpose: the product-language change: the machine-recognised words (report sections, the Leftovers section and its "none", review classes, the fold marker, plan columns) live in `.boa/markers.json`; `boa language set <lang> --texts FILE` switches only when every hook passes on samples in the new language. A plan column may also carry `aliases`, the header names an existing plan already uses for it (`"plan.edge_column": {"en": "Edge cases", "aliases": ["Edge"]}`): every tool that reads the plan by column name accepts them. Add them safely: edit a copy of the file, check it with `BOA_MARKERS` naming the copy (`BOA_MARKERS=<copy> boa language check` in a POSIX shell; `trace_check.py` reads the same variable, to preview the effect), then move the copy into place.
 - When: the user changes the product language (lead procedure: `boa language set` first); `show` and `check` at bootstrap and when a marker is in doubt.
 - Wire: nothing (a command; the hooks and tools read the markers file).
 - Verify: `boa language check` exits 0 and `boa language show` names the current language.
-- Limits: the memory block syntax is never a marker and never translated; a refused `set` changes nothing; the agent copies the regenerated agents and commands into its runtime again.
+- Limits: the memory block syntax is never a marker and never translated; a refused `set` changes nothing; the agent copies the regenerated agents and commands into its runtime again. Aliases exist only for the plan columns, are never translated (`set` keeps them), match like the texts (case and outer spaces ignored) and are refused when equal to another entry's text or alias or holding an unescaped `|`. A file to regenerate that is a FIFO, a device, a socket or a directory is skipped with one line naming it, never opened; such a markers file is refused.
 
 #### Tool card: pause
 - Files: `.boa/bin/pause-flag.sh`, `.boa/tools/pause_flag.py`, `.boa/hooks/pause_guard.py`, `.boa/hooks/shell_lexer.py`, `.boa/hooks/lead_stop.py`
@@ -294,7 +302,7 @@ another tool.
 - When: `/pause-project` and `/resume-project`; the guard judges every call.
 - Wire: the pause guard on the runtime's pre-tool event for every tool (it must be able to deny); the lead's stop as `stop`.
 - Verify: with the flag set, a sub-agent's ordinary command is denied and its resume-file write allowed.
-- Limits: a guard fails closed: a broken or slow guard refuses the call.
+- Limits: a guard fails closed: a broken or slow guard refuses the call. `set` refuses a flag path that exists and is not a regular file (a device, a pipe, a socket, a directory), never replacing it; `clear` refuses a directory there, naming it (remove a directory by hand; `clear` removes anything else). Anything that is not a regular file at the flag's path, a dangling symbolic link included, is a pause that is never opened: the guard denies and names it, `status` says paused, the stop hooks skip with one line naming it. A leftover at the flag's temp path (`PAUSE.tmp.<pid>`, one per process, so two `set` runs at once never share one) is removed without being opened; a directory there is refused, naming it. The temp files other `set` runs left behind (`PAUSE.tmp.<another pid>`, or an older `PAUSE.tmp`) last changed over a minute before the run started are removed too, without being opened; a directory among them is left alone, and a `set` running at the same time keeps its own.
 
 #### Tool card: guard
 - Files: `.boa/hooks/guard_destructive.py`, `.boa/hooks/hook_config.py`, `.boa/hooks/agent_binding.py`
@@ -302,7 +310,9 @@ another tool.
 - When: every shell, file-write and file-read call; the binding at every sub-agent spawn.
 - Wire: the runtime's pre-tool event for shell, file-write and file-read calls (it must be able to deny); the spawn's post-tool event of a `sub-agent` for the binding.
 - Verify: `boa status --guards` shows no GUARD DOWN line; `python3 -I .boa/hooks/hook_config.py` prints the derived paths.
-- Limits: a safety net against accidents, not a sandbox; fails closed (the lead's logged escape is the way out).
+- Limits: a safety net against accidents, not a sandbox; fails closed (the lead's logged escape is the way out). A configuration file that is a dangling symbolic link fails it closed too, naming it. A guard log that is not a regular file (any symbolic link included, dangling or not: a link is never followed; on a system without a no-follow open, Windows, a link that appears between the check and the open is followed by the open, so a dangling one may have its target created, and the record is then not written unless the link is swapped in and back out before the second look, when it is written at the link's target) is never opened: the denial stays immediate, the record goes to the error output naming the file, and the escape is refused (it cannot be logged), naming the ways out: the owner removes the file by hand, or, with the configuration loaded, the lead sets `BOA_LOG_DIR` in `.boa/config.env` to a new subdirectory of `.boa/` with its file tool; with the configuration not loaded every call is refused, the lead's file tool included, so only the owner's hand is left (remove the file, fix `.boa/config.env`). The guard log is checked with the standard library only: a missing or broken config reader never stops the lead's escape from being logged. A binding file that is not a regular file is never opened: the agent stays unbound. A protected-commands file that is not a regular file or is a dangling symbolic link is never opened: every shell command is refused, naming it. The runtime's own configuration names are protected against shell writes and deletions in the main checkout only: git verbs that change them, the same names in a lane worktree and the lead's file tools are not judged.
+- Bulk edits in your lane: `find <your lane dir> -name … -exec sed -i … {} +` (judged per start), never
+  `… | xargs sed -i` (a sub-agent's writer fed by xargs is refused: the names come from stdin).
 
 #### Tool card: session status
 - Files: `.boa/hooks/session_status.py`
@@ -318,7 +328,7 @@ another tool.
 - When: writing a lesson (`memory_write.py`), at every train (lint), when recalling (search), on a failed call (recall).
 - Wire: the lint hook on the post-tool event of a `file-write`; the recall hook on `post-tool-failure`.
 - Verify: `python3 -I .boa/tools/memory_lint.py` reports 0 findings; a search finds a memory just written.
-- Limits: ids only through `memory_write.py --ingest`; a search beyond `--limit` says how many it left out.
+- Limits: ids only through `memory_write.py --ingest`, never one a block of the bank already holds (a legacy block before the cutoff marker included); a search beyond `--limit` says how many it left out; `--since`/`--until` take ASCII digits only. An output path that exists and is not a regular file (a device, a pipe, a socket, a directory) is refused, never replaced, `--receipt` included (refused before the fold reads anything, as is a receipt that is one of the inputs or whose directory does not exist); an input of `--ingest` or `--mark`, a memory file or the id ledger that is not a regular file is refused before it is read (the search skips such a file with a warning, the lint reports it as a finding without opening it). An embedding-environment stamp that is not a regular file is never opened: the search ranks by keywords alone with a warning naming it.
 
 #### Tool card: plan lanes
 - Files: `.boa/tools/plan_lanes.py`
@@ -326,7 +336,7 @@ another tool.
 - When: after every plan edit (`--check`), before filling lanes.
 - Wire: nothing.
 - Verify: `python3 -I .boa/tools/plan_lanes.py --check` exits 0.
-- Limits: reads only.
+- Limits: reads only. A file it reads that is a FIFO, a device, a socket or a directory is never opened: the plan is refused.
 
 #### Tool card: traceability
 - Files: `.boa/tools/trace_check.py`
@@ -334,7 +344,9 @@ another tool.
 - When: per task (its rows), every train, at close-out (`--close`, must be 0).
 - Wire: nothing (the project gate runs it).
 - Verify: `MISMATCHES: 0` at close-out.
-- Limits: reads only; exit 1 on any mismatch.
+- Limits: reads only; exit 1 on any mismatch. It finds the plan's columns by their names in `.boa/markers.json` (any
+  language, or an alias); a plan header in which two columns name the same column, or a second plan-table row of one
+  task, stops it (exit 2, the lines named). A file it reads that is a FIFO, a device, a socket or a directory is never opened: it is a mismatch naming it (the plan: exit 2).
 
 #### Tool card: metalearning
 - Files: `.boa/tools/metalearning.py`
@@ -344,7 +356,7 @@ another tool.
 - When: the lead at each train.
 - Wire: nothing.
 - Verify: `python3 -I .boa/tools/metalearning.py curate` ends with a `METALEARNING:` line.
-- Limits: a lesson over 600 characters is cut with a marker naming the lane journal entry.
+- Limits: a lesson over 600 characters is cut with a marker naming the lane journal entry. `append --report` reads any readable path, a pipe included (a shell's process substitution passes one); the inbox and the curated file are never opened when they are a FIFO, a device, a socket or a directory (`curate` skips, `append` refuses).
 
 #### Tool card: handbook drift
 - Files: `.boa/tools/handbook_drift.py`
@@ -360,7 +372,7 @@ another tool.
 - When: imported by the tools and hooks, never run on their own.
 - Wire: nothing.
 - Verify: the tools that import them run (`boa help`, `boa status`).
-- Limits: a config line outside the grammar is refused, naming the line.
+- Limits: a config line outside the grammar is refused, naming the line; so is a config file that is a FIFO, a device, a socket, a directory or a dangling symbolic link, never opened (the guards then refuse every call). The shared atomic writer never replaces an existing file that is not a regular file (a device, a pipe, a socket, a directory): it refuses with an error naming it; so does the locked append.
 
 ## 4. Test suites
 
@@ -391,17 +403,19 @@ approval. The tester's runs are the lane's only ones (one per tester round, at m
 ### 5.0 Filling lanes (lead; 09 §3)
 `python3 -I .boa/tools/plan_lanes.py` → wave 1, hotspots serialised, product first → admission from
 `lead-status.sh` → `.boa/bin/lane-worktree.sh add <T> <branch>` → a registry line → the builder tier (OR-34) and a
-full brief (09 §4); the Agent description starts with the task id.
+full brief (09 §4); the sub-agent spawn's description starts with the task id.
 
 ### 5.1 The per-lane pipeline (AGENTS.md §6, 09 §5)
-Builder (own tests, static steps on changed paths; no mutation) → reviewer (adversarial; `[SEV] [BLOCKING|NON-BLOCKING] file:line — failure
+Builder (own tests, static steps on changed paths; no mutation) → reviewer (adversarial;
+`[SEV] [BLOCKING|NON-BLOCKING] [SMALL|LARGE, non-blocking only] file:line — failure
 — fix`; delicate lines for the tester) → builder delta ⇄ reviewer delta until the review exit rule (OR-52) → tester (acceptance map,
 touched suites, the lane's only mutation runs: one per tester round, at most 3 per lane across bounces) → integrator. Docs-only: no review (OR-01).
 **Sub-agent lifecycle (OR-16, 09 §5.3):** every spawn is recorded by the project's clock (project-wiring "usage clock and throughput": task | role |
 agent id | model | started | state; the one home of agent ids); the same task and role → resume the same agent by id
 for every later round (how the runtime resumes an agent: its profile in `references/runtimes.md`, verified at
-install); new task or new work → a new agent; train integrators resumed
-for the same train, new for a new one; a lost agent → a new one briefed from `.lane-resume/<role>.md`.
+every wiring, OR-63); new task or new work → a new agent; train integrators resumed
+for the same train, new for a new one; a lost agent → a new one briefed from `.lane-resume/<role>.md`; resume or fresh after
+a bounce (large context, piled-up rounds, expired cache): 09 §5.3.
 
 ### 5.2 Loop guard (09 §6, OR-06)
 3 failed builder attempts on the same finding → stop the lane, ask the owner; recommended: one final targeted attempt.
@@ -457,7 +471,8 @@ Every task in `docs/parity/features.toml` (feature or categorised not-feature); 
 
 ### 5.13 Pause and resume (09 §13)
 `/pause-project` → `pause-flag.sh set` → the pause guard leaves every sub-agent only the pause set (its resume file,
-read-only git, add/commit in its worktree, rm of its scratch subdir, kill of its own PIDs; any other resource of the
+read-only git, add/commit in its worktree, rm of its scratch subdir, kill of its own PIDs, the hand-back of its
+final report; any other resource of the
 lane is named in its resume file and removed by the lead; 09 §13); the integrator stops BEFORE starting the next merge; a merge command already running
 completes; it never leaves a half-merged train unreported (its resume file states the stack state: which lanes
 merged and at which SHAs, which are stacked and gated, which are not) → `subagent_stop.py` copies the resume files
@@ -503,7 +518,7 @@ refuses sub-agent writes). Durable rules never live there.
 |---|---|
 | `README.md` | what lives in the lead dir |
 | `lanes.md` | the registry: append-only, one UTC line per stage change; newest per lane wins; train lines; override evidence |
-| `lanes/<T>.md` | the lane journal (SubagentStop hook); never edited by hand |
+| `lanes/<T>.md` | the lane journal (sub-agent stop hook); never edited by hand |
 | `lanes/<T>-<role>.md` | resume or closure copies of `.lane-resume/<role>.md` |
 | `brief-common.md` | the rules pasted into every brief (generic + project lessons) |
 | `open-items.md` | the transit queue (OR-25): `- [ ]` lines with their date and owner (the stop hook's Leftovers, the lead's and owner's notes), placed in the plan — the only source of work — by the next fold; empty at close-out |
@@ -539,7 +554,7 @@ Authoritative: AGENTS.md §4, §9, [08-OWNER-RULES.md](../memory-bank/08-OWNER-R
 - **Git:** branch `{{BOA_BRANCH_GRAMMAR}}`; conventional commits with the session's trailers (OR-42); one PR per task;
   never commit or push to `{{BOA_MAIN_BRANCH}}` (OR-38); sub-agents never push; merges only pinned to the gated head;
   never let the forge delete a branch whose worktree holds live state (OR-18).
-- **Heavy runs** on the runner when one is configured; unreachable = stop and report (OR-32).
+- **Heavy runs** (OR-32): with the runner on, its command not configured on this machine or not reachable: stop and report, never a local fallback; with the runner off, heavy runs and the gate run locally.
 - **The guard** (OR-37…OR-40): sub-agents bound to the lane of the first task id of their description; the lead's
   override only as `{{BOA_ENV_PREFIX}}GUARD_LEAD_VERIFIED=<single_token> ` at the start of a command, after proving
   the target is ours, evidence in `<lead>/lanes.md`; never for sub-agents. **Known limits** (it is a net, not a
@@ -569,7 +584,8 @@ Authoritative: AGENTS.md §4, §9, [08-OWNER-RULES.md](../memory-bank/08-OWNER-R
     `.boa/stack/handbook-rows.md`;
   - [AGENTS.md](../AGENTS.md) does not link this file; `memory-bank/RESUME.md` does not point to `AGENTS.md`; a role
     contract lacks its "Agent handbook" section or the section never names `docs/agent-handbook.md`;
-  - a relative link in `AGENTS.md` or this file is broken.
+  - a relative link in `AGENTS.md`, this file or `docs/boa-rules.md` (when it exists) is broken;
+  - a file it reads is not UTF-8 text (named, with the first bad byte).
   It knows no agent runtime: the runtime's own files (its renderings of the agents and commands, its settings, its
   instruction file) are kept in step with their `.boa/` sources by the agent that wired them, and checked by the
   project (the BOA package's `references/runtimes.md`).
